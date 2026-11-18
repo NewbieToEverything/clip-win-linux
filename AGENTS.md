@@ -26,7 +26,7 @@
    ```
 
 3. 在有 MSVC 或 MinGW 的构建环境运行 `windows/build-hotkey.ps1`。把 `ClipBridgeHotkey.exe`、`clipbridge-send.ps1`、`clipbridge-notify.ps1` 和 `install-user-startup.ps1` 放在同一 Windows 目录。没有构建工具时，说明所缺依赖并确认后再安装。
-4. 先运行 EXE 的默认模式。在记事本有焦点时复制测试图片或文件，按 `Alt+Shift+V`。收到 Windows 通知后手动粘贴，应该得到 Debian 路径。再在实际终端的编辑区按 `Ctrl+Shift+V`，验证粘贴路径的行为。
+4. 先运行 EXE 的默认模式。在记事本有焦点时复制测试图片或文件，按 `Alt+Shift+V`。右下角进度窗提示路径已复制后手动粘贴，应该得到 Debian 路径。再在实际终端的编辑区按 `Ctrl+Shift+V`，验证粘贴路径的行为。
 5. 核对终端进程名后才启用自动粘贴。以下是 Windows Terminal 的示例。切换启动参数前，先运行 `ClipBridgeHotkey.exe --stop` 并等待当前进程退出，以免两个进程同时注册热键。
 
    ```powershell
@@ -41,6 +41,7 @@
 
 ## 验收和修改
 
+- 升级带进度的版本时，先更新 Debian 接收器，再一起更新 Windows 的 EXE 和上传脚本。公网连接耗时较长时可按设备配置 20 秒的自动粘贴时限，保留各自的 SSH 别名和工作空间。
 - 服务端回归测试用 `/usr/bin/python3 -B -m unittest discover -s tests -v`。验证 PNG、文件/目录和工作空间路由。
 - 桌面端验证热键只触发一次、上传失败不会贴出旧路径、切窗降级为手动粘贴。接收端回执校验成功后才能写入本地剪贴板。
 - 原生 tmux 和 Agent Manager 都沿用当前终端的路径粘贴。逐个记录目标界面的结果。路径文本、附件标签和模型确实读到了图像是三种不同的验收结果。

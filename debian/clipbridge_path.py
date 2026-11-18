@@ -7,6 +7,7 @@ import signal
 import stat
 import sys
 import tempfile
+import time
 import unicodedata
 import uuid
 import zipfile
@@ -22,15 +23,27 @@ def timeout(*_):
     raise ValueError('Upload timed out')
 
 
-def copy(source, target, limit):
+def copy(source, target, limit, progress=None):
     checksum = hashlib.sha256()
     size = 0
-    while block := source.read(1024 * 1024):
+    read = source.read1 if progress else source.read
+    block_size = 64 * 1024 if progress else MIB
+    reported = 0
+    last_report = time.monotonic()
+    if progress:
+        progress(0)
+    while block := read(block_size):
         size += len(block)
         if size > limit:
             raise ValueError('Size limit exceeded')
         target.write(block)
         checksum.update(block)
+        if progress and time.monotonic() - last_report >= 0.25:
+            progress(size)
+            reported = size
+            last_report = time.monotonic()
+    if progress and size != reported:
+        progress(size)
     return size, checksum.hexdigest()
 
 
@@ -93,7 +106,11 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False) + '\n', encoding='utf-8')
 
 
-def receive(root, workspace, kind):
+def report_received(size):
+    print(f'CLIPBRIDGE_PROGRESS {size}', file=sys.stderr, flush=True)
+
+
+def receive(root, workspace, kind, progress=False):
     signal.signal(signal.SIGALRM, timeout)
     signal.alarm(120)
     batch_id = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ-') + uuid.uuid4().hex
@@ -104,7 +121,8 @@ def receive(root, workspace, kind):
     with tempfile.TemporaryDirectory(dir=staging) as temporary:
         temporary = Path(temporary)
         with (temporary / 'input').open('w+b') as blob:
-            size, digest = copy(sys.stdin.buffer, blob, 15 * MIB if kind == 'png' else ARCHIVE_LIMIT)
+            limit = 15 * MIB if kind == 'png' else ARCHIVE_LIMIT
+            size, digest = copy(sys.stdin.buffer, blob, limit, report_received if progress else None)
             blob.seek(0)
             if kind == 'png':
                 from PIL import Image
@@ -149,11 +167,14 @@ def dispatch(args):
             return {'ok': True, 'workspace': workspace}
     if args == ['latest']:
         return json.loads((root / 'latest.json').read_text())
+    progress = args[-1:] == ['--progress']
+    if progress:
+        args = args[:-1]
     formats = {('receive', '--format', 'png'): 'png', ('receive', '--format', 'archive'): 'archive',
                ('receive', '--format=png'): 'png', ('receive', '--format=archive'): 'archive'}
     if tuple(args) not in formats:
         raise ValueError('Invalid path-first command')
-    return receive(root, workspace, formats[tuple(args)])
+    return receive(root, workspace, formats[tuple(args)], progress)
 
 
 def main(args):

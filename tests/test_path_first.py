@@ -2,10 +2,12 @@ import hashlib
 import io
 import json
 import os
+import select
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -45,6 +47,32 @@ class ReceiverTests(unittest.TestCase):
             self.assertEqual(receipt['sha256'], [hashlib.sha256(image).hexdigest()])
             self.assertEqual(json.loads(self.command(['latest'], workspace).stdout), receipt)
         self.assertNotEqual(self.ingest('png', image, 'workspace-c').returncode, 0)
+
+    def test_progress_reports_received_bytes_before_eof(self):
+        blob = io.BytesIO()
+        Image.new('RGB', (23, 12), 'green').save(blob, format='PNG')
+        data = blob.getvalue()
+        env = os.environ | {'HOME': self.home.name, 'CLIPBRIDGE_WS': 'workspace-b'}
+        with subprocess.Popen(
+            [sys.executable, CLI, 'receive', '--format=png', '--progress'],
+            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=0,
+        ) as process:
+            try:
+                self.assertTrue(select.select([process.stderr], [], [], 4)[0])
+                self.assertEqual(process.stderr.readline(), b'CLIPBRIDGE_PROGRESS 0\n')
+                time.sleep(0.30)
+                process.stdin.write(data[:32])
+                self.assertTrue(select.select([process.stderr], [], [], 4)[0])
+                self.assertEqual(process.stderr.readline(), b'CLIPBRIDGE_PROGRESS 32\n')
+                process.stdin.write(data[32:])
+                stdout, stderr = process.communicate(timeout=5)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(stderr, f'CLIPBRIDGE_PROGRESS {len(data)}\n'.encode())
+        self.assertEqual(json.loads(stdout)['bytes'], len(data))
 
     def test_archive_files_folders_unicode_and_manifest(self):
         blob = io.BytesIO()

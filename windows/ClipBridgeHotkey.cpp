@@ -10,6 +10,7 @@
 #include <shlobj.h>
 #include <propsys.h>
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <filesystem>
@@ -19,6 +20,9 @@
 
 constexpr UINT finished = WM_APP + 1;
 constexpr UINT cancelUpload = WM_APP + 2;
+constexpr UINT uploadProgress = WM_APP + 3;
+constexpr UINT_PTR pasteDeadline = 1;
+constexpr UINT_PTR statusExpiry = 2;
 constexpr UINT hotkeyId = 1;
 constexpr wchar_t title[] = L"ClipBridge";
 constexpr wchar_t windowClass[] = L"ClipBridgeHotkeyWindow";
@@ -30,6 +34,7 @@ struct Upload {
     DWORD clipboardSequence{};
     unsigned long long focusGeneration{};
     ULONGLONG started{};
+    bool pasteCandidate{};
     std::string path;
     std::shared_ptr<std::atomic_bool> cancel;
 };
@@ -41,6 +46,51 @@ std::shared_ptr<std::atomic_bool> active;
 bool closing;
 std::wstring terminal;
 ULONGLONG pasteTimeoutMs = 8000;
+HWND statusWindow;
+HFONT statusFont;
+HMONITOR statusMonitor;
+std::wstring lastStatus;
+bool deadlineExpired;
+
+void notify(const wchar_t* message);
+
+bool showStatus(const std::wstring& text) {
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (!GetMonitorInfoW(statusMonitor, &monitor)) return false;
+    const RECT area = monitor.rcWork;
+    const LONG width = (area.right - area.left < 392) ? area.right - area.left - 32 : 360;
+    constexpr int height = 86;
+    if (!statusWindow) {
+        statusWindow = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+            L"STATIC", nullptr, WS_POPUP | WS_BORDER | SS_CENTER, 0, 0, width, height,
+            window, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!statusWindow) return false;
+        statusFont = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        if (statusFont) SendMessageW(statusWindow, WM_SETFONT, reinterpret_cast<WPARAM>(statusFont), FALSE);
+    }
+    SetWindowTextW(statusWindow, text.c_str());
+    return SetWindowPos(statusWindow, HWND_TOPMOST, area.right - width - 16, area.bottom - height - 16,
+        width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE;
+}
+
+void refreshProgress() {
+    const auto status = L"ClipBridge\r\n" + lastStatus;
+    showStatus(deadlineExpired ? status + L"\r\nAuto-paste expired. Upload continues." : status);
+}
+
+void hideStatus() {
+    if (statusWindow) ShowWindow(statusWindow, SW_HIDE);
+}
+
+void showResult(const std::wstring& text) {
+    if (!showStatus(L"ClipBridge\r\n" + text))
+        notify(text.c_str());
+    else
+        SetTimer(window, statusExpiry, 6500, nullptr);
+}
+
 std::wstring modulePath() {
     wchar_t exe[32768];
     const DWORD n = GetModuleFileNameW(nullptr, exe, ARRAYSIZE(exe));
@@ -113,14 +163,49 @@ std::wstring processName(DWORD pid) {
     return ok ? std::filesystem::path(std::wstring(filename, size)).filename().wstring() : L"";
 }
 
-std::string sendUpload(const std::atomic_bool& cancel) {
+bool publishProgress(HWND target, const std::string& line) {
+    std::wstring text;
+    if (line == "STATUS encoding") text = L"Encoding PNG...";
+    else if (line == "STATUS packing") text = L"Packing files...";
+    else if (line == "STATUS preparing-ssh") text = L"Preparing SSH...";
+    else if (line == "STATUS connecting") text = L"Connecting to Debian...";
+    else if (line == "STATUS verifying") text = L"Debian is verifying the upload...";
+    else if (line.rfind("PROGRESS ", 0) == 0) {
+        unsigned long long received = 0;
+        unsigned long long total = 0;
+        char extra;
+        if (std::sscanf(line.c_str(), "PROGRESS %llu %llu%c", &received, &total, &extra) != 2 ||
+            !total || received > total || total > 200ull * 1024 * 1024)
+            return false;
+        wchar_t label[128]{};
+        const auto percent = received * 100 / total;
+        if (total >= 1024) {
+            const bool showMiB = total >= 1024ull * 1024;
+            const double unit = showMiB ? 1024.0 * 1024 : 1024.0;
+            std::swprintf(label, ARRAYSIZE(label), L"Received %.1f / %.1f %ls (%llu%%)",
+                received / unit, total / unit, showMiB ? L"MiB" : L"KiB", percent);
+        } else {
+            std::swprintf(label, ARRAYSIZE(label), L"Received %llu / %llu bytes (%llu%%)",
+                received, total, percent);
+        }
+        text = label;
+    } else {
+        return false;
+    }
+    auto notice = std::make_unique<std::wstring>(std::move(text));
+    if (PostMessageW(target, uploadProgress, 0, reinterpret_cast<LPARAM>(notice.get())))
+        notice.release();
+    return true;
+}
+
+std::string sendUpload(HWND target, const std::atomic_bool& cancel) {
     const auto module = modulePath();
     if (module.empty()) return {};
     const auto script = std::filesystem::path(module).parent_path() / L"clipbridge-send.ps1";
     const auto executable = powershellPath();
     if (executable.empty()) return {};
     std::wstring command = L"\"" + executable + L"\" -NoProfile -NonInteractive -STA -File \"" +
-        script.wstring() + L"\"";
+        script.wstring() + L"\" -ProgressEvents";
     SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
     HANDLE reader{}, writer{};
     if (!CreatePipe(&reader, &writer, &security, 0)) return {};
@@ -150,6 +235,7 @@ std::string sendUpload(const std::atomic_bool& cancel) {
     CloseHandle(writer);
     if (nullDevice != INVALID_HANDLE_VALUE) CloseHandle(nullDevice);
     std::string output;
+    std::string buffered;
     if (launched) {
         const bool started = AssignProcessToJobObject(job, child.hProcess) &&
             ResumeThread(child.hThread) != static_cast<DWORD>(-1);
@@ -165,8 +251,18 @@ std::string sendUpload(const std::atomic_bool& cancel) {
                 char data[4096];
                 DWORD count = 0;
                 if (!ReadFile(reader, data, available < sizeof(data) ? available : sizeof(data), &count, nullptr)) break;
-                output.append(data, count);
-                if (output.size() > 512000) { valid = false; break; }
+                buffered.append(data, count);
+                if (buffered.size() > 512000) { valid = false; break; }
+                std::size_t newline;
+                while ((newline = buffered.find('\n')) != std::string::npos) {
+                    auto line = buffered.substr(0, newline);
+                    buffered.erase(0, newline + 1);
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    if (!output.empty()) { valid = false; break; }
+                    if (publishProgress(target, line)) continue;
+                    if (line.empty() || line.front() != '/') { valid = false; break; }
+                    output = std::move(line);
+                }
             } else if (WaitForSingleObject(child.hProcess, 20) == WAIT_OBJECT_0) {
                 break;
             }
@@ -179,7 +275,7 @@ std::string sendUpload(const std::atomic_bool& cancel) {
         DWORD exitCode = 1;
         GetExitCodeProcess(child.hProcess, &exitCode);
         CloseHandle(child.hProcess);
-        if (!valid || exitCode) output.clear();
+        if (!valid || exitCode || !buffered.empty()) output.clear();
     }
     if (job) CloseHandle(job);
     CloseHandle(reader);
@@ -214,7 +310,7 @@ bool setClipboard(const std::string& path, DWORD sequence) {
 
 bool paste(const Upload& upload) {
     if (terminal.empty() || !eventHook || upload.focusGeneration != focusGeneration ||
-        upload.target != GetForegroundWindow() || GetTickCount64() - upload.started > pasteTimeoutMs)
+        upload.target != GetForegroundWindow() || GetTickCount64() - upload.started >= pasteTimeoutMs)
         return false;
     DWORD pid = 0;
     GetWindowThreadProcessId(upload.target, &pid);
@@ -246,32 +342,67 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         upload->clipboardSequence = GetClipboardSequenceNumber();
         upload->focusGeneration = focusGeneration;
         upload->started = GetTickCount64();
+        upload->pasteCandidate = !terminal.empty() &&
+            !_wcsicmp(processName(upload->pid).c_str(), terminal.c_str());
+        statusMonitor = MonitorFromWindow(upload->target, MONITOR_DEFAULTTOPRIMARY);
+        deadlineExpired = false;
+        lastStatus = L"Reading the clipboard...";
+        KillTimer(hwnd, statusExpiry);
+        refreshProgress();
+        if (upload->pasteCandidate) SetTimer(hwnd, pasteDeadline, static_cast<UINT>(pasteTimeoutMs), nullptr);
         active = std::make_shared<std::atomic_bool>(false);
         upload->cancel = active;
         try {
             std::thread([task = std::move(upload), hwnd]() mutable {
-                try { task->path = sendUpload(*task->cancel); } catch (...) {}
+                try { task->path = sendUpload(hwnd, *task->cancel); } catch (...) {}
                 Upload* result = task.release();
                 if (!PostMessageW(hwnd, finished, 0, reinterpret_cast<LPARAM>(result))) delete result;
             }).detach();
         } catch (...) {
             active.reset();
-            notify(L"Could not start the upload.");
+            KillTimer(hwnd, pasteDeadline);
+            showResult(L"Could not start the upload.");
         }
+        return 0;
+    }
+    if (message == uploadProgress) {
+        std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(lParam));
+        if (active && !closing) {
+            lastStatus = *text;
+            refreshProgress();
+        }
+        return 0;
+    }
+    if (message == WM_TIMER && wParam == pasteDeadline) {
+        KillTimer(hwnd, pasteDeadline);
+        if (active && !closing) {
+            deadlineExpired = true;
+            refreshProgress();
+        }
+        return 0;
+    }
+    if (message == WM_TIMER && wParam == statusExpiry) {
+        KillTimer(hwnd, statusExpiry);
+        hideStatus();
         return 0;
     }
     if (message == finished) {
         std::unique_ptr<Upload> upload(reinterpret_cast<Upload*>(lParam));
         active.reset();
+        KillTimer(hwnd, pasteDeadline);
         if (closing) { DestroyWindow(hwnd); return 0; }
         if (upload->cancel->load())
-            notify(L"Upload cancelled. Server commit status may be unknown.");
+            showResult(L"Upload cancelled. Server commit status may be unknown.");
         else if (upload->path.empty())
-            notify(L"Upload failed or the receipt was unavailable. Run clipbridge-send.ps1 for details.");
+            showResult(L"Upload failed or receipt missing.\r\nRun clipbridge-send.ps1 for details.");
         else if (!setClipboard(upload->path, upload->clipboardSequence))
-            notify(L"Upload succeeded. The clipboard changed or was unavailable. Query clipbridge latest.");
-        else if (!paste(*upload))
-            notify(L"Upload succeeded. Path copied for manual paste.");
+            showResult(L"Upload complete. Clipboard unavailable.\r\nQuery clipbridge latest for the path.");
+        else if (paste(*upload))
+            hideStatus();
+        else if (upload->pasteCandidate && GetTickCount64() - upload->started >= pasteTimeoutMs)
+            showResult(L"Upload complete. Auto-paste expired.\r\nPath copied. Press Ctrl+Shift+V.");
+        else
+            showResult(L"Upload complete. Path copied.");
         return 0;
     }
     if (message == cancelUpload) {
@@ -350,5 +481,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         DispatchMessageW(&msg);
     }
     if (eventHook) UnhookWinEvent(eventHook);
+    if (statusFont) DeleteObject(statusFont);
     return 0;
 }

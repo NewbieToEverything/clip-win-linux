@@ -25,7 +25,7 @@ ClipBridge 把 Windows 剪贴板中的截图、文件和文件夹上传到 Debia
    ```
 
 4. Windows 上运行 `windows/build-hotkey.ps1`。它使用已有的 MSVC 或 MinGW。将编译后的 EXE、`clipbridge-send.ps1` 和 `clipbridge-notify.ps1` 放在同一目录，例如 `D:\Tools\ClipBridge\ClipBridgeHotkey.exe`。
-5. 先按 [手动验收表](tests/manual-test-matrix.md) 验证路径粘贴，再从 Windows 桌面启动 EXE。默认按 `Alt+Shift+V` 上传并复制路径，由你手动粘贴。程序在后台运行。它通过 Windows 应用通知报告上传失败，或提醒路径已复制、可手动粘贴。
+5. 先按 [手动验收表](tests/manual-test-matrix.md) 验证路径粘贴，再从 Windows 桌面启动 EXE。默认按 `Alt+Shift+V` 上传并复制路径，由你手动粘贴。程序在后台运行。上传时，屏幕右下角的小窗会显示准备、打包、连接、Debian 已接收的字节数和校验阶段。
 
 ## 配置
 
@@ -43,14 +43,22 @@ ClipBridge 把 Windows 剪贴板中的截图、文件和文件夹上传到 Debia
 & 'D:\Tools\ClipBridge\ClipBridgeHotkey.exe' --auto-paste WindowsTerminal.exe --paste-timeout 8
 ```
 
-切换模式前运行 `ClipBridgeHotkey.exe --stop`，等待当前进程退出。`--cancel-upload` 可以取消正在进行的上传。自动粘贴成功时保持安静，其他提示由 Windows 通知设置控制。
+切换模式前运行 `ClipBridgeHotkey.exe --stop`，等待当前进程退出。`--cancel-upload` 可以取消正在进行的上传。自动粘贴成功后进度窗会收起。超过自动粘贴时限时，进度窗会提醒上传仍在继续。成功后会提示路径已复制。
+
+公网 SSH 握手耗时较长时，可以在登录自启任务中为该设备设置更宽松的时限。例如，在 Windows PowerShell 中运行以下命令，以 20 秒时限注册登录自启。这个设置只影响自动粘贴等待时间。
+
+```powershell
+& .\install-user-startup.ps1 -AutoPasteTerminal WindowsTerminal.exe -PasteTimeoutSeconds 20
+```
+
+升级进度功能时，先更新 Debian 接收器，再一起更新 Windows 的 EXE 和 `clipbridge-send.ps1`。多台设备可以分批升级，继续使用各自已有的 SSH 别名和工作空间。
 
 开启自动模式时，在上传期间保持当前 Agent 编辑区和窗格。程序会检查前台窗口和进程，窗口切换或超过时限时仅复制路径。同一终端窗口里的窗格切换可能检测不到。
 
 ## 用法
 
 - `clipbridge-send.ps1` 手动上传，并输出服务端确认过的路径。加 `-CopyPath` 可复制它。路径为单行文本。
-- `clipbridge receive --format png|archive` 从 SSH 标准输入接收二进制，返回单行 JSON。
+- `clipbridge receive --format png|archive` 从 SSH 标准输入接收二进制，返回单行 JSON。带 `--progress` 时，接收字节数通过 stderr 实时报告。
 - `clipbridge doctor` 检查环境变量映射和工作空间能否写入。
 - `clipbridge latest` 返回当前 v4 工作空间最近的成功回执。
 - PNG 上限 15 MiB、2500 万像素。ZIP 上限 200 MiB，解包总量上限 200 MiB，最多 2000 条目。

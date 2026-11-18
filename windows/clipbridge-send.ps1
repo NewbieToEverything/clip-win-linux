@@ -1,6 +1,7 @@
 param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'debian',
-    [switch]$CopyPath
+    [switch]$CopyPath,
+    [switch]$ProgressEvents
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.IO.Compression
@@ -30,7 +31,11 @@ function Add-ArchiveItem($archive, [string]$path, [string]$name, [int]$depth) {
     } finally { $source.Dispose() }
 }
 
-function Invoke-OpenSsh([string]$arguments, $stream, [int]$timeoutMs) {
+function Publish-Stage([string]$stage) {
+    if ($ProgressEvents) { [Console]::WriteLine('STATUS ' + $stage) }
+}
+
+function Invoke-OpenSsh([string]$arguments, $stream, [int]$timeoutMs, [long]$total = 0) {
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = (Get-Command ssh.exe -CommandType Application).Source
     $start.Arguments = $arguments
@@ -46,20 +51,43 @@ function Invoke-OpenSsh([string]$arguments, $stream, [int]$timeoutMs) {
     } finally { [Console]::InputEncoding = $encoding }
     try {
         $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
+        $stderr = [Text.StringBuilder]::new()
+        $pending = $process.StandardError.ReadLineAsync()
         $timer = [Diagnostics.Stopwatch]::StartNew()
         $stdin = $process.StandardInput.BaseStream
-        if ($null -ne $stream) {
-            $write = $stream.CopyToAsync($stdin)
-            if (!$write.Wait($timeoutMs)) { throw 'Upload timed out. Commit status unknown.' }
+        $write = if ($null -ne $stream) { $stream.CopyToAsync($stdin) } else { $null }
+        if ($null -eq $write) { $stdin.Close() }
+        $lastReceived = -1L
+
+        while ($null -ne $write -or $null -ne $pending -or !$process.HasExited) {
+            if ($timer.ElapsedMilliseconds -ge $timeoutMs) { throw 'SSH timed out. Commit status unknown.' }
+            if ($null -ne $write -and $write.IsCompleted) {
+                [void]$write.GetAwaiter().GetResult()
+                $stdin.Close()
+                $write = $null
+            }
+            if ($null -ne $pending) {
+                if (!$pending.Wait(25)) { continue }
+                $entry = $pending.Result
+                if ($null -eq $entry) { $pending = $null; continue }
+                $pending = $process.StandardError.ReadLineAsync()
+                if ($ProgressEvents -and $total -gt 0 -and $entry -cmatch '^CLIPBRIDGE_PROGRESS ([0-9]{1,9})$') {
+                    $received = [long]$Matches[1]
+                    if ($received -gt $lastReceived -and $received -le $total) {
+                        $lastReceived = $received
+                        [Console]::WriteLine(('PROGRESS {0} {1}' -f $received, $total))
+                        if ($received -eq $total) { Publish-Stage 'verifying' }
+                    }
+                } elseif ($stderr.Length -lt 8192) {
+                    [void]$stderr.AppendLine($entry)
+                }
+            } else {
+                Start-Sleep -Milliseconds 25
+            }
         }
-        $stdin.Close()
-        if (!$process.WaitForExit([Math]::Max(0, $timeoutMs - [int]$timer.ElapsedMilliseconds))) {
-            throw 'SSH timed out. Commit status unknown.'
-        }
-        if (!$stdout.Wait(1500) -or !$stderr.Wait(1500)) { throw 'SSH output incomplete. Commit status unknown.' }
+        if (!$stdout.Wait(1500)) { throw 'SSH output incomplete. Commit status unknown.' }
         if ($process.ExitCode -ne 0) {
-            throw ('SSH failed (exit {0}). No usable receipt. {1}' -f $process.ExitCode, $stderr.Result.Trim())
+            throw ('SSH failed (exit {0}). No usable receipt. {1}' -f $process.ExitCode, $stderr.ToString().Trim())
         }
         return $stdout.Result
     } finally {
@@ -83,6 +111,7 @@ try {
     }
     if ($null -eq $snapshot) { throw 'Clipboard contains no image or file list.' }
     if ($snapshot -is [Drawing.Image]) {
+        Publish-Stage 'encoding'
         $format = 'png'
         $count = 1
         $payload = [IO.MemoryStream]::new()
@@ -92,6 +121,7 @@ try {
         } finally { $snapshot.Dispose() }
         if ($payload.Length -gt 15MB) { throw 'PNG exceeds 15 MiB.' }
     } else {
+        Publish-Stage 'packing'
         $format = 'archive'
         $count = $snapshot.Count
         $temp = [IO.Path]::Combine([IO.Path]::GetTempPath(), [IO.Path]::GetRandomFileName())
@@ -108,6 +138,7 @@ try {
         } finally { $archive.Dispose() }
         if ($payload.Length -gt $limit) { throw 'ZIP exceeds 200 MiB.' }
     }
+    Publish-Stage 'preparing-ssh'
     $effective = Invoke-OpenSsh "-G $SshHost" $null 8000
     $mapped = [regex]::Matches($effective, '(?m)^setenv\s+CLIPBRIDGE_WS=(workspace-[ab])\s*$')
     if ($mapped.Count -ne 1) { throw 'SSH alias must declare one valid CLIPBRIDGE_WS.' }
@@ -117,7 +148,9 @@ try {
     try { $digest = [BitConverter]::ToString($sha.ComputeHash($payload)).Replace('-','').ToLowerInvariant() }
     finally { $sha.Dispose() }
     $payload.Position = 0
-    $result = (Invoke-OpenSsh "-T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 $SshHost ~/.local/bin/clipbridge receive --format=$format" $payload 120000).TrimEnd([char]13,[char]10)
+    $progressFlag = if ($ProgressEvents) { ' --progress' } else { '' }
+    Publish-Stage 'connecting'
+    $result = (Invoke-OpenSsh "-T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 -o ServerAliveInterval=10 -o ServerAliveCountMax=2 $SshHost ~/.local/bin/clipbridge receive --format=$format$progressFlag" $payload 120000 $payload.Length).TrimEnd([char]13,[char]10)
     if ($result -match '[\r\n]' -or $result -notmatch '^\{.*\}$') { throw 'Invalid server receipt.' }
     $receipt = ConvertFrom-Json $result
     $kind = if ($format -eq 'png') { 'image' } else { 'archive' }
