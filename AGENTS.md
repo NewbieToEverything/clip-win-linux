@@ -1,48 +1,44 @@
 # Agent 部署指南
 
-当用户要求部署 ClipBridge 时，从本页开始。对照 [README](README.md) 执行配置，并用 [桌面验收表](tests/manual-test-matrix.md) 记录结果。
+执行 ClipBridge 部署时先读本页与 [README](README.md)，再按 [桌面验收表](tests/manual-test-matrix.md) 验证实际终端行为。
 
-## 确认环境
+## 目标与约束
 
-- 确认当前 Shell 在 Windows 还是 Debian。确认 Windows 实际使用的终端程序、能免交互连接 Debian 的 SSH 别名，以及要用的工作空间（`workspace-a` 或 `workspace-b`）。
-- 单机使用默认工作空间 A。两台 Windows 分别设置 A、B，可以共用 Debian 登录账号和 SSH 别名。工作空间用于路由上传，同一个 Unix 用户仍可读到两个空间。
-- 沿用已有的 SSH 认证、XPipe 入口和 tmux server。避免修改 Shell 全局启动文件。通过现有 SSH 客户端检查连接，保护本机的凭据、配置原文和上传内容。
-- 能执行的步骤直接执行。需要用户输入 sudo 密码、核对主机密钥、操作 Windows 桌面或安装缺失依赖时，给出对应主机上的具体操作。
+- 上传只读取剪贴板；自动粘贴会用回执路径覆盖当前剪贴板，并标记为不加入 Win+V 历史。原文件名、相对目录结构和内容哈希必须由 Debian 回执确认。
+- 每台 Windows 使用 SSH `SetEnv CLIPBRIDGE_WS` 路由到独立工作空间。不要把主机密钥检查设为关闭。
+- 使用独立的长期 SSH 子进程通道复用连接，不依赖 XPipe 已打开的终端隧道或同一局域网。
+- 不要把 Unicode 字符输入描述为终端 Paste。需分别验收路径文本、附件标签和 Agent 实际读取图片。
+- 不读取、复制或输出密钥、SSH 配置全文、剪贴板样本或用户目录中的敏感配置。
 
 ## Debian 端
 
-1. 需要 Python 3、Pillow 和正在提供 SSH 登录的 sshd。Debian 上可用 `python3-pil` 提供 Pillow。用 `/usr/bin/python3 -c 'import PIL'` 核实。
-2. 在仓库根目录运行 `bash debian/install.sh`。它把接收器部署到 `~/.local/bin/clipbridge`。
-3. 在现有 SSH 会话中按 README 安装 `debian/20-clipbridge-env.conf`。先跑 `sudo /usr/sbin/sshd -t`，确认有效配置允许 `CLIPBRIDGE_WS`，再 reload SSH。保留原会话直到新连接通过。
-4. 可在服务器直接运行 `CLIPBRIDGE_WS=workspace-a ~/.local/bin/clipbridge doctor` 检查本地存储。还要从 Windows 做一次 SSH 验证，见下一节。
+1. 确认 Python 3、Pillow 和现有 sshd 可用。缺少软件包时先向用户说明安装命令，不要自行安装。
+2. 仓库根目录运行 `bash debian/install.sh`，安装接收器并启用用户级每小时清理计时器。`systemctl --user` 需要有效的用户服务管理器。
+3. 在 Debian sshd 配置中允许 `CLIPBRIDGE_WS`。安装配置前保留当前 SSH 会话；用 `sudo /usr/sbin/sshd -t` 验证，再 reload SSH。
+4. 在现有登录环境运行 `CLIPBRIDGE_WS=workspace-a ~/.local/bin/clipbridge doctor`。清理状态可用 `~/.local/bin/clipbridge stats --all` 查看。
 
 ## Windows 端
 
-1. 在已有的 OpenSSH Host 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`，设备 B 使用 `workspace-b`。上传器和热键 EXE 默认使用 `debian`。如用户保留其他别名，手动上传可传 `-SshHost`，常驻热键仍需要能用 `debian` 连接。
-2. 从 Windows 桌面 PowerShell 验证实际连接。返回的 JSON 要对应本机配置的工作空间。
+1. 在 Windows 的 OpenSSH Host 别名 `debian` 配置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。SSH 私钥和 known_hosts 沿用用户现有配置。
+2. 在 Windows PowerShell 验证连接：
 
    ```powershell
    ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes debian '~/.local/bin/clipbridge doctor'
    ```
 
-3. 在有 MSVC 或 MinGW 的构建环境运行 `windows/build-hotkey.ps1`。把 `ClipBridgeHotkey.exe`、`clipbridge-send.ps1`、`clipbridge-notify.ps1` 和 `install-user-startup.ps1` 放在同一 Windows 目录。没有构建工具时，说明所缺依赖并确认后再安装。
-4. 先运行 EXE 的默认模式。在记事本有焦点时复制测试图片或文件，按 `Alt+Shift+V`。右下角进度窗提示路径已复制后手动粘贴，应该得到 Debian 路径。再在实际终端的编辑区按 `Ctrl+Shift+V`，验证粘贴路径的行为。
-5. 核对终端进程名后才启用自动粘贴。以下是 Windows Terminal 的示例。切换启动参数前，先运行 `ClipBridgeHotkey.exe --stop` 并等待当前进程退出，以免两个进程同时注册热键。
+   回执工作空间必须和该设备映射一致。
+3. 在有 MSVC 或 MinGW 的环境运行 `windows/build-hotkey.ps1`。构建需链接 Win32、Direct2D、DirectWrite 和 DWM 系统库。EXE、`clipbridge-agent.ps1`、`clipbridge-notify.ps1` 放在同一目录。`clipbridge-send.ps1` 是单次手动工具。
+4. 启动 EXE，复制新图片或文件并按 `Alt+Shift+V`。检查右下角进度、Debian 文件名与 SHA-256，再到目标输入框检查生成的内容。
+5. 原生进度卡片由 Direct2D/DirectWrite 绘制，超过约 300 ms 才显示，不抢焦点。自动输入受前台窗口、焦点变化与等待时限保护，但无法判断同一个终端窗口内的 pane 或 Agent 当前编辑区。没有通过相应桌面验收前，不应假定图片已成为附件。
 
-   ```powershell
-   & .\ClipBridgeHotkey.exe --auto-paste WindowsTerminal.exe --paste-timeout 8
-   ```
+## 协议与缓存
 
-   自动粘贴只在收到有效回执且前台窗口匹配时发送一次文本粘贴。等待超时，或切换到另一个 Windows 窗口时，成功的路径仍可手动粘贴。自动粘贴无法识别同一终端内的窗格切换，用户应在等待时保持编辑位置。用户要求登录自启时，再用同一目录的自启脚本注册普通权限计划任务。
+- `CBR5` 帧头包含请求 ID、工作空间、源名称、相对路径、长度及 SHA-256；随后是按序排列的文件字节。
+- Debian 使用暂存目录、哈希核验和原子提交。重复请求 ID 可安全重试，避免确认帧丢失导致重复写入。
+- 接收限制：每文件 128 MiB、每批 256 MiB、每工作空间 512 MiB、全局 1 GiB、最多 200 个条目、相对路径最多 32 层。
+- 默认缓存 TTL 为 24 小时。清理器每小时检查 TTL、配额和陈旧暂存文件；近期文件受短时保护。可用 `prune --all --dry-run` 预览清理。
+- 数据目录为 `~/.local/share/clipbridge/<workspace>/batches/`；旧版缓存也纳入统计和清理。此缓存不保证长期保存。
 
-   ```powershell
-   & .\install-user-startup.ps1 -AutoPasteTerminal WindowsTerminal.exe -PasteTimeoutSeconds 8
-   ```
+## 完成验收
 
-## 验收和修改
-
-- 升级带进度的版本时，先更新 Debian 接收器，再一起更新 Windows 的 EXE 和上传脚本。公网连接耗时较长时可按设备配置 20 秒的自动粘贴时限，保留各自的 SSH 别名和工作空间。
-- 服务端回归测试用 `/usr/bin/python3 -B -m unittest discover -s tests -v`。验证 PNG、文件/目录和工作空间路由。
-- 桌面端验证热键只触发一次、上传失败不会贴出旧路径、切窗降级为手动粘贴。接收端回执校验成功后才能写入本地剪贴板。
-- 原生 tmux 和 Agent Manager 都沿用当前终端的路径粘贴。逐个记录目标界面的结果。路径文本、附件标签和模型确实读到了图像是三种不同的验收结果。
-- 优先使用仓库内的脚本和测试。提交前筛除本机身份、主机地址、上传样本和编译产物。保留现有 SSH 信任设置，避免把验证步骤写成绕过主机密钥检查的命令。
+先跑 Debian 单元测试，再在 Windows 实际桌面完成手动验收表。至少记录两台设备的 SSH 路由、文件/目录 Unicode 原名、同名文件、传输中切换窗口、失败重试和缓存清理。路径文本、附件标签与 Agent 正确读取图片必须分别记录。

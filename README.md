@@ -1,71 +1,45 @@
 # ClipBridge
 
-ClipBridge 把 Windows 剪贴板中的截图、文件和文件夹上传到 Debian，并把绝对路径复制回 Windows 剪贴板。
-
-请让负责部署的 Agent 先读 [AGENTS.md](AGENTS.md)，里面有跨主机配置步骤和验收标准。
+ClipBridge 将 Windows 剪贴板中的图片、文件和文件夹经 SSH 安全传到 Debian，并返回可在远程终端使用的绝对路径。
 
 ## 快速开始
 
-1. 在 Debian 运行 `bash debian/install.sh`。服务端使用 Python 3、Pillow 和已有的 sshd。v4 通过一次性 SSH 命令接收文件。
-2. 从已登录的 Debian 会话执行以下命令。保留当前会话，直到 Windows A 验证新连接。
-
-   ```bash
-   sudo install -m 644 debian/20-clipbridge-env.conf /etc/ssh/sshd_config.d/20-clipbridge-env.conf
-   sudo /usr/sbin/sshd -t && sudo /usr/sbin/sshd -T | awk '$1 == "acceptenv" {print}'
-   sudo /usr/sbin/sshd -t && sudo systemctl reload ssh
-   ```
-
-   检查第二条命令的输出中包含 `CLIPBRIDGE_WS`，再重载 sshd。
-
-3. 在 Windows A 的 OpenSSH 配置中，给现有 `Host debian` 段加上 `SetEnv CLIPBRIDGE_WS=workspace-a`。设备 B 在自己的 `Host debian` 段使用 `workspace-b`。保存后直接验证。
+1. Debian 安装 Python 3 和 Pillow 后，在仓库运行 `bash debian/install.sh`。该脚本安装接收器并启用每小时缓存清理计时器。
+2. Debian sshd 必须允许 `CLIPBRIDGE_WS` 环境变量。检查并重载 sshd 的步骤见 [Agent 部署指南](AGENTS.md#debian-端)。保持现有 SSH 会话，直到新连接验证成功。
+3. Windows OpenSSH 配置中的 `Host debian` 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。验证：
 
    ```powershell
-   notepad "$env:USERPROFILE\.ssh\config"
    ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes debian '~/.local/bin/clipbridge doctor'
    ```
 
-4. Windows 上运行 `windows/build-hotkey.ps1`。它使用已有的 MSVC 或 MinGW。将编译后的 EXE、`clipbridge-send.ps1` 和 `clipbridge-notify.ps1` 放在同一目录，例如 `D:\Tools\ClipBridge\ClipBridgeHotkey.exe`。
-5. 先按 [手动验收表](tests/manual-test-matrix.md) 验证路径粘贴，再从 Windows 桌面启动 EXE。默认按 `Alt+Shift+V` 上传并复制路径，由你手动粘贴。程序在后台运行。上传时，屏幕右下角的小窗会显示准备、打包、连接、Debian 已接收的字节数和校验阶段。
+4. 在 Windows 构建环境运行 `windows/build-hotkey.ps1`。将生成的 `ClipBridgeHotkey.exe`、`clipbridge-agent.ps1` 和 `clipbridge-notify.ps1` 放在同一目录。
+5. 启动 EXE 后复制图片或文件，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后 Debian 保存原名文件并返回绝对路径。
 
 ## 配置
 
-| 配置 | 类型 | 默认值 | 含义 |
-|---|---|---|---|
-| SSH `SetEnv CLIPBRIDGE_WS` | `workspace-a` 或 `workspace-b` | 必填 | 本机上传的工作空间。 |
-| 上传器 `-SshHost` | SSH 别名 | `debian` | 手动运行发送器时可覆盖。常驻 EXE 使用默认别名。 |
-| EXE `--auto-paste terminal.exe` | 确认过的终端程序名 | 关闭 | 仅对指定终端启用 `Ctrl+Shift+V`。默认等待 8 秒。 |
-| EXE `--paste-timeout seconds` | 1–60 秒整数 | 8 秒 | 超时后只复制路径，上传仍会继续。需与 `--auto-paste` 一起使用。 |
-| 登录自启脚本 `-AutoPasteTerminal` | 终端程序名 | 关闭 | 验收后可运行 `install-user-startup.ps1` 注册普通权限登录任务，可用 `-PasteTimeoutSeconds` 设置时限。 |
-
-在 Windows 终端完成手动测试后，可用实际进程名启动自动模式。Windows Terminal 的名称通常是 `WindowsTerminal.exe`。
-
-```powershell
-& 'D:\Tools\ClipBridge\ClipBridgeHotkey.exe' --auto-paste WindowsTerminal.exe --paste-timeout 8
-```
-
-切换模式前运行 `ClipBridgeHotkey.exe --stop`，等待当前进程退出。`--cancel-upload` 可以取消正在进行的上传。自动粘贴成功后进度窗会收起。超过自动粘贴时限时，进度窗会提醒上传仍在继续。成功后会提示路径已复制。
-
-公网 SSH 握手耗时较长时，可以在登录自启任务中为该设备设置更宽松的时限。例如，在 Windows PowerShell 中运行以下命令，以 20 秒时限注册登录自启。这个设置只影响自动粘贴等待时间。
-
-```powershell
-& .\install-user-startup.ps1 -AutoPasteTerminal WindowsTerminal.exe -PasteTimeoutSeconds 20
-```
-
-升级进度功能时，先更新 Debian 接收器，再一起更新 Windows 的 EXE 和 `clipbridge-send.ps1`。多台设备可以分批升级，继续使用各自已有的 SSH 别名和工作空间。
-
-开启自动模式时，在上传期间保持当前 Agent 编辑区和窗格。程序会检查前台窗口和进程，窗口切换或超过时限时仅复制路径。同一终端窗口里的窗格切换可能检测不到。
+| 项目 | 默认值 | 含义 |
+|---|---|---|
+| SSH 别名 `debian` | `debian` | Windows 端专用长连接所用别名；使用该别名的现有密钥和主机信任配置。 |
+| SSH `SetEnv CLIPBRIDGE_WS` | 必填 | `workspace-a` 或 `workspace-b`，隔离不同 Windows 设备的存储目录。 |
+| `--auto-paste terminal.exe` | 关闭 | 允许向指定的前台终端执行自动粘贴，例如 `WindowsTerminal.exe`。 |
+| `--paste-timeout seconds` | 8 秒 | 自动粘贴的等待上限，范围 1–60 秒。 |
+| PNG 单文件上限 | 15 MiB | Windows 剪贴板位图编码成 PNG 后的大小上限。 |
+| 普通文件上限 | 128 MiB | 单个文件大小。 |
+| 单次上传上限 | 256 MiB | 一批文件的总大小；最多 200 个文件或目录项。 |
+| 缓存 TTL | 24 小时 | Debian 接收文件默认保留期；近期文件及配额回收另受清理器保护。 |
 
 ## 用法
 
-- `clipbridge-send.ps1` 手动上传，并输出服务端确认过的路径。加 `-CopyPath` 可复制它。路径为单行文本。
-- `clipbridge receive --format png|archive` 从 SSH 标准输入接收二进制，返回单行 JSON。带 `--progress` 时，接收字节数通过 stderr 实时报告。
-- `clipbridge doctor` 检查环境变量映射和工作空间能否写入。
-- `clipbridge latest` 返回当前 v4 工作空间最近的成功回执。
-- PNG 上限 15 MiB、2500 万像素。ZIP 上限 200 MiB，解包总量上限 200 MiB，最多 2000 条目。
-- 如果原先部署过 Xvfb 版，先跑通 v4，再切换 XPipe 默认环境并停用旧服务。
+- `Alt+Shift+V`：读取 Windows 剪贴板并上传。自动粘贴时会把回执路径写入当前 Windows 剪贴板，并标记为不加入 `Win+V` 历史。同一 ClipBridge 进程复用专用 SSH 通道。可在图片或文件传输期间切换窗口，回执完成后程序仅在原前台窗口仍匹配且未超时的情况下输入路径。
+- 自动粘贴通过 Windows 剪贴板和终端的 Ctrl+Shift+V 完成。图片是否成为 Agent 附件，须按 [桌面验收表](tests/manual-test-matrix.md) 在目标终端和输入框验证；未验证前请手动确认输入结果。
+- 进度卡片不抢焦点，按原窗口所在屏幕右下角显示；百分比只用于已知总字节的上传阶段。高 DPI 清晰度需要在 Windows 100%、125%、150%、200% 缩放下实测。
+- `windows/clipbridge-send.ps1`：一次性手动上传工具，兼容 PNG 与归档输入；成功后在标准输出返回路径。
+- `clipbridge doctor`：检查工作空间和存储。
+- `clipbridge latest`：查看该工作空间最近成功回执。
+- `clipbridge stats --all`：查看缓存占用统计。
+- `clipbridge prune --all [--dry-run]`：执行或预览缓存清理。
+- `clipbridge serve --stdio`：供 Windows 持久 SSH 通道使用的帧式协议入口。
 
-### 原生 tmux
+文件保存在 `~/.local/share/clipbridge/<workspace>/batches/`。清理器每小时运行，按 24 小时 TTL、磁盘配额和近期文件保护策略回收旧数据。缓存不能作为唯一备份。
 
-ClipBridge 通过 Windows 终端粘贴路径。SSH 会话内可以直接运行 Agent，也可以使用原生 tmux 或 Agent Manager。各自沿用现有窗口、会话和 socket。自动粘贴只能判断 Windows 前台窗口，无法区分同一窗口内的 tmux pane、标签页或密码提示。
-
-普通文件路径可以直接粘到 tmux 中的编辑区。图片路径是否转成附件，由当前 Agent 和终端的粘贴方式决定。用实际界面按 [手动验收表](tests/manual-test-matrix.md) 测试。
+接收端测试：`/usr/bin/python3 -B -m unittest discover -s tests -v`。Windows PowerShell 与真实终端的桌面验收步骤见 [桌面验收表](tests/manual-test-matrix.md)。

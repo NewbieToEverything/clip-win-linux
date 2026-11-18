@@ -1,9 +1,9 @@
 param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'debian',
-    [switch]$CopyPath,
     [switch]$ProgressEvents
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.IO.Compression
 $limit = 200MB
 $entryCount = 0
@@ -130,10 +130,13 @@ try {
             [IO.FileShare]::None, [int]65536, [IO.FileOptions]::DeleteOnClose)
         $archive = [IO.Compression.ZipArchive]::new($payload, 'Create', $true)
         try {
+            $sourceRootIndex = 0
             foreach ($item in $snapshot) {
+                $sourceRootIndex++
                 $name = [IO.Path]::GetFileName($item.TrimEnd('\'))
                 if (!$name) { throw 'Drive roots are unsupported.' }
-                Add-ArchiveItem $archive $item $name 1
+                $indexedName = ('{0:D4}/{1}' -f $sourceRootIndex, $name)
+                Add-ArchiveItem $archive $item $indexedName 1
             }
         } finally { $archive.Dispose() }
         if ($payload.Length -gt $limit) { throw 'ZIP exceeds 200 MiB.' }
@@ -154,24 +157,22 @@ try {
     if ($result -match '[\r\n]' -or $result -notmatch '^\{.*\}$') { throw 'Invalid server receipt.' }
     $receipt = ConvertFrom-Json $result
     $kind = if ($format -eq 'png') { 'image' } else { 'archive' }
-    if ($receipt.ok -isnot [bool] -or !$receipt.ok -or $receipt.version -ne 1 -or
+    if ($receipt.ok -isnot [bool] -or !$receipt.ok -or $receipt.version -ne 2 -or
         $receipt.workspace -cne $workspace -or $receipt.kind -cne $kind -or
         $receipt.count -ne $count -or @($receipt.paths).Count -ne $count -or
-        @($receipt.sha256).Count -ne 1 -or $receipt.sha256[0] -cne $digest -or
+        $receipt.archive_sha256 -cne $digest -or
         $receipt.bytes -ne $payload.Length -or $receipt.batch_id -cnotmatch '^\d{8}T\d{6}Z-[a-f0-9]{32}$') {
         throw 'Server receipt does not match the upload.'
     }
     $batchId = [regex]::Escape($receipt.batch_id)
-    $prefix = "^/[A-Za-z0-9_./-]+/\.local/share/clipbridge/$workspace/"
-    $pattern = if ($format -eq 'png') { $prefix + "images/i-$batchId\.png\z" }
-        else { $prefix + "batches/$batchId/payload/(?:d\d+|f\d+(?:\.[a-z0-9]{1,12})?)\z" }
+    $pattern = "^/.+/.local/share/clipbridge/$workspace/batches/$batchId/payload/items/[0-9]{4}/.+\z"
     foreach ($path in $receipt.paths) {
-        if ($path -isnot [string] -or $path -cnotmatch $pattern -or $path -match '/\.\.?(/|$)') {
+        if ($path -isnot [string] -or $path -cnotmatch $pattern -or $path.Contains('\') -or
+            $path -match '/\.\.?(/|$)' -or $path -match '[\r\n\x00-\x1F\x7F]') {
             throw 'Invalid server path.'
         }
     }
     $line = $receipt.paths -join ' '
-    if ($CopyPath) { [Windows.Forms.Clipboard]::SetText($line) }
     [Console]::WriteLine($line)
 } finally {
     if ($null -ne $payload) { $payload.Dispose() }
