@@ -1,0 +1,16 @@
+/.agents/
+/.codex/
+/.aws/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.exe
+*.obj
+*.pdb
+/ClipBridge_Windows_Debian_*.md
+/windows/hotkey.ahk
+/windows/send-image.ps1
+/debian/activate.sh
+/debian/clipbridge-xvfb@.service
+/debian/setup-debian.sh
