@@ -137,7 +137,8 @@ def main():
 
 if __name__ == '__main__':
     os.umask(0o077)
-    if sys.argv[1:] in (['doctor'], ['latest']) or (
+    if sys.argv[1:] in (['doctor'], ['latest'], ['serve', '--stdio'], ['stats', '--all'],
+                        ['prune', '--all'], ['prune', '--all', '--dry-run']) or (
             sys.argv[1:2] == ['receive'] and sys.argv[2:3]
             and sys.argv[2].startswith('--format')):
         from clipbridge_path import main as path_main

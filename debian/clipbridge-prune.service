@@ -1,0 +1,6 @@
+[Unit]
+Description=ClipBridge prune temporary transfer cache
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/clipbridge prune --all

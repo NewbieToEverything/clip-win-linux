@@ -1,0 +1,11 @@
+[Unit]
+Description=ClipBridge hourly temporary cache cleanup
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+Unit=clipbridge-prune.service
+
+[Install]
+WantedBy=timers.target
