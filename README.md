@@ -24,8 +24,8 @@ ClipBridge 把 Windows 剪贴板中的截图、文件和文件夹上传到 Debia
    ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes debian '~/.local/bin/clipbridge doctor'
    ```
 
-4. Windows 上运行 `windows/build-hotkey.ps1`。它使用已有的 MSVC 或 MinGW。将编译后的 EXE 与上传脚本放在同一目录，例如 `D:\Tools\ClipBridge\ClipBridgeHotkey.exe`。
-5. 先按 [手动验收表](tests/manual-test-matrix.md) 验证路径粘贴，再从 Windows 桌面启动 EXE。默认按 `Alt+Shift+V` 上传并复制路径，由你手动粘贴。Windows 托盘里可以退出程序。
+4. Windows 上运行 `windows/build-hotkey.ps1`。它使用已有的 MSVC 或 MinGW。将编译后的 EXE、`clipbridge-send.ps1` 和 `clipbridge-notify.ps1` 放在同一目录，例如 `D:\Tools\ClipBridge\ClipBridgeHotkey.exe`。
+5. 先按 [手动验收表](tests/manual-test-matrix.md) 验证路径粘贴，再从 Windows 桌面启动 EXE。默认按 `Alt+Shift+V` 上传并复制路径，由你手动粘贴。程序在后台运行。它通过 Windows 应用通知报告上传失败，或提醒路径已复制、可手动粘贴。
 
 ## 配置
 
@@ -42,6 +42,8 @@ ClipBridge 把 Windows 剪贴板中的截图、文件和文件夹上传到 Debia
 ```powershell
 & 'D:\Tools\ClipBridge\ClipBridgeHotkey.exe' --auto-paste WindowsTerminal.exe --paste-timeout 8
 ```
+
+切换模式前运行 `ClipBridgeHotkey.exe --stop`，等待当前进程退出。`--cancel-upload` 可以取消正在进行的上传。自动粘贴成功时保持安静，其他提示由 Windows 通知设置控制。
 
 开启自动模式时，在上传期间保持当前 Agent 编辑区和窗格。程序会检查前台窗口和进程，窗口切换或超过时限时仅复制路径。同一终端窗口里的窗格切换可能检测不到。
 

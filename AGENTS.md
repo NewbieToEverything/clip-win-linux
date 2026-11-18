@@ -25,9 +25,9 @@
    ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes debian '~/.local/bin/clipbridge doctor'
    ```
 
-3. 在有 MSVC 或 MinGW 的构建环境运行 `windows/build-hotkey.ps1`。把 `ClipBridgeHotkey.exe`、`clipbridge-send.ps1` 和 `install-user-startup.ps1` 放在同一 Windows 目录。没有构建工具时，说明所缺依赖并确认后再安装。
-4. 先运行 EXE 的默认模式。在记事本有焦点时复制测试图片或文件，按 `Alt+Shift+V`。托盘提示成功后手动粘贴，应该得到 Debian 路径。再在实际终端的编辑区按 `Ctrl+Shift+V`，验证粘贴路径的行为。
-5. 核对终端进程名后才启用自动粘贴。以下是 Windows Terminal 的示例。切换启动参数前，先从托盘退出当前 ClipBridge，以免两个进程同时注册热键。
+3. 在有 MSVC 或 MinGW 的构建环境运行 `windows/build-hotkey.ps1`。把 `ClipBridgeHotkey.exe`、`clipbridge-send.ps1`、`clipbridge-notify.ps1` 和 `install-user-startup.ps1` 放在同一 Windows 目录。没有构建工具时，说明所缺依赖并确认后再安装。
+4. 先运行 EXE 的默认模式。在记事本有焦点时复制测试图片或文件，按 `Alt+Shift+V`。收到 Windows 通知后手动粘贴，应该得到 Debian 路径。再在实际终端的编辑区按 `Ctrl+Shift+V`，验证粘贴路径的行为。
+5. 核对终端进程名后才启用自动粘贴。以下是 Windows Terminal 的示例。切换启动参数前，先运行 `ClipBridgeHotkey.exe --stop` 并等待当前进程退出，以免两个进程同时注册热键。
 
    ```powershell
    & .\ClipBridgeHotkey.exe --auto-paste WindowsTerminal.exe --paste-timeout 8

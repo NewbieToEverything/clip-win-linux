@@ -8,6 +8,7 @@
 | 文本路径 | 用 PowerShell `Set-Clipboard -Value '<Debian 上现存文件的绝对路径>'`。在实际终端的安全编辑区按 `Ctrl+Shift+V`。 | 完整路径出现在输入位置。 |
 | 图片路径 | 以上述方式依次测试 Codex 原生、Agent Manager Quick Prompt 和 Focused Agent。B 测普通 tmux。 | 每个界面记录 L1 路径文本、L2 附件标签或 L3 模型正确描述图像。 |
 | PNG / 文件 / 多文件 / 文件夹 | Windows 复制测试对象，在 PowerShell 运行 `clipbridge-send.ps1`。含空目录和 Unicode 文件名的案例也要覆盖。 | 路径存在。文件字节一致，文件夹树和 manifest 正确。 |
+| Windows 通知 | 启动 EXE 后保持记事本在前台，分别上传一张图和尝试上传普通文本。 | 托盘无常驻图标。Windows 通知分别提示路径已复制和上传失败。 |
 | 全局热键 | 启动 EXE，先将焦点放在记事本，再复制一张新图并按 `Alt+Shift+V`。 | Debian 收到新图，路径写入 Windows 剪贴板。 |
 | 拦截旧图 | 保留旧 Xvfb 图片，焦点放在 Codex，按热键上传一批较慢的测试文件。 | 回执前没有旧图片标签。若复现则暂停启用自动模式。 |
 | 目标检查 | 开启自动模式后，在同一终端测试成功，再测试上传时切窗、来回切焦点、按住修饰键和超出配置的时限（默认 8 秒）。 | 只在目标稳定的情况下单次粘贴。其他情况允许手动粘贴。 |
