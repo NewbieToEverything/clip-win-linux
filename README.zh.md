@@ -6,6 +6,8 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
 
 > **让 Agent 部署？** 让它先读 [AGENTS.md](AGENTS.md) 和 [部署依赖](DEPENDENCIES.md)，再按你的环境选择安装目录和 SSH 别名。
 
+![模拟演示：Windows 图片经 SSH 上传，随后出现在远端 Codex 输入框。](docs/clipbridge-demo.gif)
+
 ## 架构
 
 ### ClipBridge 由什么组成
