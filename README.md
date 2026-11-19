@@ -12,18 +12,16 @@ ClipBridge sends images, files, and folders from the Windows clipboard to Linux 
 
 ```mermaid
 flowchart LR
-    A["Windows clipboard<br/>Image, file, or folder"]
-    B["Linux receiver<br/>Stores the upload"]
+    A["Windows · ClipBridge<br/>Reads the clipboard"]
+    B["Linux receiver service<br/>Verifies and stores files"]
     C["Windows clipboard<br/>Absolute Linux paths"]
     D["Active agent input<br/>Path or image attachment"]
-    A -->|"Alt+Shift+V · SSH upload"| B
+    A -->|"Alt+Shift+V · Persistent SSH upload"| B
     B -->|"Return paths"| C
     C -->|"Terminal Ctrl+Shift+V"| D
 ```
 
-When you press the hotkey, ClipBridge reads the current Windows clipboard and uploads the content over a dedicated persistent SSH connection. The Linux receiver verifies and stores the upload, then returns an absolute path for each item.
-
-With automatic paste enabled, ClipBridge checks focus, the timeout, and whether the clipboard changed. It writes the returned paths to the current Windows clipboard, excludes them from `Win+V` history, and triggers `Ctrl+Shift+V` in the open terminal. Agents that recognize image paths can display image attachments, as verified in Codex CLI. Regular files and folders appear as paths.
+The Linux receiver, tested on Debian, returns an absolute path for each image, file, or folder it receives. If the automatic paste checks pass, ClipBridge writes the paths to the clipboard and triggers terminal paste. These paths stay out of `Win+V` history.
 
 ### SSH connection lifecycle with XPipe (optional)
 
