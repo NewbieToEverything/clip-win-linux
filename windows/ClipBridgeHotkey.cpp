@@ -80,6 +80,7 @@ std::shared_ptr<std::atomic_bool> active;
 std::atomic_bool closing{false};
 std::shared_ptr<std::atomic_bool> startupConnect;
 std::wstring terminal;
+std::wstring sshHost = L"debian";
 ULONGLONG pasteTimeoutMs = 8000;
 HWND statusWindow;
 HMONITOR statusMonitor;
@@ -495,7 +496,7 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
     startup.hStdOutput = childOutput;
     startup.hStdError = nullDevice;
     std::wstring command = L"\"" + executable + L"\" -NoProfile -NonInteractive -STA -File \"" +
-        script.wstring() + L"\" -SshHost debian";
+        script.wstring() + L"\" -SshHost " + sshHost;
     PROCESS_INFORMATION child{};
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -872,25 +873,39 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                 ? 0 : 1;
         }
     }
-    bool valid = argv && (argc == 1 || argc == 3 || argc == 5);
-    if (valid && argc >= 3) {
-        terminal = argv[2];
-        valid = std::wstring(argv[1]) == L"--auto-paste" && !terminal.empty() &&
-            terminal.find_first_of(L"\\/") == std::wstring::npos;
-    }
-    if (valid && argc == 5) {
-        const std::wstring seconds = argv[4];
-        valid = std::wstring(argv[3]) == L"--paste-timeout" && !seconds.empty() &&
-            seconds.size() <= 2 && seconds.find_first_not_of(L"0123456789") == std::wstring::npos;
-        if (valid) {
-            const auto value = std::wcstoul(seconds.c_str(), nullptr, 10);
-            valid = value >= 1 && value <= 60;
-            if (valid) pasteTimeoutMs = value * 1000;
+    bool valid = argv && argc % 2 == 1;
+    bool hostSpecified = false;
+    bool timeoutSpecified = false;
+    constexpr auto hostFirst = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    constexpr auto hostChars = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-";
+    for (int i = 1; valid && i + 1 < argc; i += 2) {
+        const std::wstring option = argv[i];
+        const std::wstring value = argv[i + 1];
+        if (option == L"--ssh-host" && !hostSpecified) {
+            valid = !value.empty() && std::wcschr(hostFirst, value.front()) &&
+                value.find_first_not_of(hostChars) == std::wstring::npos;
+            if (valid) sshHost = value;
+            hostSpecified = true;
+        } else if (option == L"--auto-paste" && terminal.empty()) {
+            valid = !value.empty() && value.find_first_of(L"\\/") == std::wstring::npos;
+            if (valid) terminal = value;
+        } else if (option == L"--paste-timeout" && !timeoutSpecified) {
+            valid = !value.empty() && value.size() <= 2 &&
+                value.find_first_not_of(L"0123456789") == std::wstring::npos;
+            if (valid) {
+                const auto seconds = std::wcstoul(value.c_str(), nullptr, 10);
+                valid = seconds >= 1 && seconds <= 60;
+                if (valid) pasteTimeoutMs = seconds * 1000;
+            }
+            timeoutSpecified = true;
+        } else {
+            valid = false;
         }
     }
+    valid = valid && (!timeoutSpecified || !terminal.empty());
     if (argv) LocalFree(argv);
     if (!valid) {
-        MessageBoxW(nullptr, L"Usage: ClipBridgeHotkey.exe [--auto-paste terminal.exe [--paste-timeout seconds]] or --stop / --cancel-upload",
+        MessageBoxW(nullptr, L"Usage: ClipBridgeHotkey.exe [--ssh-host alias] [--auto-paste terminal.exe [--paste-timeout seconds]] or --stop / --cancel-upload",
             title, MB_OK | MB_ICONERROR);
         return 1;
     }

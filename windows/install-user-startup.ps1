@@ -1,12 +1,14 @@
 param(
     [ValidatePattern('^[A-Za-z0-9_.-]+\.exe$')][string]$AutoPasteTerminal,
-    [ValidateRange(1,60)][int]$PasteTimeoutSeconds = 8
+    [ValidateRange(1,60)][int]$PasteTimeoutSeconds = 8,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'debian'
 )
 $ErrorActionPreference = 'Stop'
 $exe = Join-Path $PSScriptRoot 'ClipBridgeHotkey.exe'
 if (!(Test-Path -LiteralPath $exe)) { throw 'Build ClipBridgeHotkey.exe first.' }
 $parameters = @{ Execute = $exe; WorkingDirectory = $PSScriptRoot }
-if ($AutoPasteTerminal) { $parameters.Argument = "--auto-paste $AutoPasteTerminal --paste-timeout $PasteTimeoutSeconds" }
+$parameters.Argument = "--ssh-host $SshHost"
+if ($AutoPasteTerminal) { $parameters.Argument += " --auto-paste $AutoPasteTerminal --paste-timeout $PasteTimeoutSeconds" }
 $action = New-ScheduledTaskAction @parameters
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
