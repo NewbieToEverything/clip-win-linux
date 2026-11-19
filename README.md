@@ -20,6 +20,8 @@ flowchart LR
 
 ## 快速开始
 
+先按 [部署依赖](DEPENDENCIES.md) 检查 Linux 接收端、Windows 运行环境和构建工具。
+
 1. Debian 安装 Python 3 和 Pillow 后，在仓库运行 `bash debian/install.sh`。该脚本安装接收器并启用每小时缓存清理计时器。
 2. Debian sshd 必须允许 `CLIPBRIDGE_WS` 环境变量。检查并重载 sshd 的步骤见 [Agent 部署指南](AGENTS.md#debian-端)。保持现有 SSH 会话，直到新连接验证成功。
 3. Windows OpenSSH 配置中的 `Host debian` 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。验证：

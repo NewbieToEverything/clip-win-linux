@@ -1,6 +1,6 @@
 # Agent 部署指南
 
-执行 ClipBridge 部署时先读本页与 [README](README.md)，再按 [桌面验收表](tests/manual-test-matrix.md) 验证实际终端行为。
+执行 ClipBridge 部署时先读本页与 [README](README.md)，先按 [部署依赖](DEPENDENCIES.md) 检查两端环境，再按 [桌面验收表](tests/manual-test-matrix.md) 验证实际终端行为。
 
 ## 目标与约束
 

@@ -1,0 +1,2 @@
+# Linux receiver. Debian users can install the equivalent python3-pil package.
+Pillow
