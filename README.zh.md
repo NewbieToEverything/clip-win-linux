@@ -2,7 +2,7 @@
 
 <p align="center"><a href="README.md">English</a> | <strong>简体中文</strong></p>
 
-ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux。每个上传的图片、文件或文件夹都会返回 Linux 绝对路径。ClipBridge 读取当前剪贴板里的图片、文件或文件夹，通过专用 SSH 连接上传。Linux 为每个上传项返回绝对路径。开启自动粘贴后，ClipBridge 会把这些路径贴到 Windows 上的 SSH 终端。
+clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，称为 **ClipBridge**。它通过 SSH 传输图片、文件和文件夹，再把 Linux 返回的绝对路径贴进当前终端。
 
 > **让 Agent 部署？** 让它先读 [AGENTS.md](AGENTS.md) 和 [部署依赖](DEPENDENCIES.md)，再按你的环境选择安装目录和 SSH 别名。
 
@@ -10,7 +10,7 @@ ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux。
 
 ### ClipBridge 怎么部署
 
-Windows 运行 ClipBridge 客户端，Linux 安装接收器。客户端通过专用 SSH 长连接启动接收器并传输文件，已打开的终端继续使用自己的 SSH 会话。下图展示可选的 XPipe 启停联动。
+Windows 运行 ClipBridge 客户端，Linux 安装接收器。客户端通过专用 SSH 长连接启动接收器并传输文件，已打开的终端继续使用自己的 SSH 会话。ClipBridge 随用于发起终端会话的程序启动和退出。仓库提供的是 XPipe 启动器，下面以它为例。
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ flowchart LR
 .\ClipBridgeHotkey.exe --ssh-host linux --auto-paste WindowsTerminal.exe
 ```
 
-### 随 XPipe 启停（可选）
+### 随 XPipe 启停
 
 XPipe 完全退出后，联动启动器会等正在进行的上传结束，再关闭 ClipBridge。
 
@@ -72,6 +72,8 @@ XPipe 完全退出后，联动启动器会等正在进行的上传结束，再�
 2. 把 `start-with-xpipe.ps1` 和 `start-with-xpipe.vbs` 放到 EXE 同目录。把原 XPipe 快捷方式复制到该目录，命名为 `XPipe-original.lnk`。
 3. 新建 Windows 快捷方式。目标设为 `wscript.exe //B //Nologo "<实际 Windows 安装目录>\start-with-xpipe.vbs"`，按实际安装位置调整路径，并将快捷方式固定到任务栏。
 4. 在 Windows PowerShell 中运行 `Stop-ScheduledTask -TaskName 'ClipBridge Hotkey'` 和 `Disable-ScheduledTask -TaskName 'ClipBridge Hotkey'`。保留此任务，供启动器读取参数。以后从新快捷方式启动 XPipe。
+
+如果你使用其他终端程序，可以沿用这套启停机制。在 [启动脚本](windows/start-with-xpipe.ps1) 中，把启动用的快捷方式和被跟踪的主进程名（当前是 `xpiped`）换成你的终端程序。启动器以该进程退出为关闭信号。
 
 ## 配置
 

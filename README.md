@@ -2,7 +2,7 @@
 
 <p align="center"><strong>English</strong> | <a href="README.zh.md">简体中文</a></p>
 
-ClipBridge sends images, files, and folders from the Windows clipboard to Linux over SSH. It returns an absolute Linux path for each uploaded item and can automatically paste those paths into your SSH terminal on Windows.
+clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboard and a Linux terminal. It sends images, files, and folders over SSH, then pastes the returned absolute Linux paths into the current terminal.
 
 > **Deploying with an agent?** Ask it to read [AGENTS.md](AGENTS.md) and [the deployment dependencies](DEPENDENCIES.md) first, then use an installation directory and SSH alias that fit your setup.
 
@@ -10,7 +10,7 @@ ClipBridge sends images, files, and folders from the Windows clipboard to Linux 
 
 ### How ClipBridge is deployed
 
-The ClipBridge client runs on Windows. It starts the Linux receiver and transfers files over a dedicated persistent SSH connection. Your terminal keeps its own SSH session. The diagram shows the optional XPipe integration.
+The ClipBridge client runs on Windows. It starts the Linux receiver and transfers files over a dedicated persistent SSH connection. Your terminal keeps its own SSH session. ClipBridge starts and stops with the application that opens your terminal sessions. The launcher included in this repository uses XPipe, as shown below.
 
 ```mermaid
 flowchart LR
@@ -64,14 +64,16 @@ Run the following command from the directory containing the EXE. If ClipBridge i
 .\ClipBridgeHotkey.exe --ssh-host linux --auto-paste WindowsTerminal.exe
 ```
 
-### Start and stop with XPipe (optional)
+### Start and stop with XPipe
 
-When XPipe exits, the optional launcher waits for any active upload before closing ClipBridge.
+When XPipe exits, the launcher waits for any active upload before closing ClipBridge.
 
 1. Run `install-user-startup.ps1 -SshHost linux -AutoPasteTerminal WindowsTerminal.exe` to configure the `ClipBridge Hotkey` scheduled task. The launcher reads its startup arguments from this task.
 2. Place `start-with-xpipe.ps1` and `start-with-xpipe.vbs` alongside the EXE. Copy your original XPipe shortcut into that directory as `XPipe-original.lnk`.
 3. Create a Windows shortcut with the target `wscript.exe //B //Nologo "<Windows install directory>\start-with-xpipe.vbs"`. Adjust the path for your installation and pin the shortcut to the taskbar.
 4. Run `Stop-ScheduledTask -TaskName 'ClipBridge Hotkey'` and `Disable-ScheduledTask -TaskName 'ClipBridge Hotkey'` in Windows PowerShell. Keep the task so the launcher can read its arguments. Use the new shortcut to open XPipe.
+
+You can use the same lifecycle mechanism with a different terminal application. In the [launcher script](windows/start-with-xpipe.ps1), change the startup shortcut and the main process name it tracks (currently `xpiped`). The launcher uses that process exiting as the signal to shut down ClipBridge.
 
 ## Configuration
 
