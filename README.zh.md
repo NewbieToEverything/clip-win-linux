@@ -22,7 +22,7 @@ flowchart LR
 
 从联动快捷方式打开 XPipe 时，ClipBridge 在后台预连接。完全退出 XPipe 后，ClipBridge 等当前上传结束再断开。只关闭一个 SSH 标签页，或者关窗口后 XPipe 仍在后台，连接会继续保留。
 
-### 按下热键后
+### 按下 Alt+Shift+V 后，图片怎么进入输入框？
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,11 @@ flowchart LR
     C -->|"终端 Ctrl+Shift+V"| D
 ```
 
-图片、文件和文件夹上传到 Linux。接收服务（已在 Debian 验证）为每项返回绝对路径。自动粘贴检查通过后，ClipBridge 写入路径并触发终端粘贴。路径不加入 `Win+V` 历史。
+1. **读取并上传。** 复制一张图片，再按 `Alt+Shift+V`。ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
+2. **保存并返回路径。** Linux 接收器校验并保存图片，然后把它的绝对路径返回给 Windows。
+3. **贴进当前输入框。** 开启自动粘贴且检查通过时，ClipBridge 把路径写入 Windows 剪贴板并触发终端的 `Ctrl+Shift+V`。支持识别图片路径的 Agent（例如 Codex CLI）会把它显示成图片附件。路径不会加入 `Win+V` 历史。
+
+普通文件和文件夹走同一条流程，输入框里显示的是各自的 Linux 绝对路径。
 
 ## 快速开始
 

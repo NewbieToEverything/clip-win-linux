@@ -22,7 +22,7 @@ flowchart LR
 
 Open XPipe using the integration shortcut to connect in the background. When XPipe exits completely, ClipBridge finishes any active upload before disconnecting. The connection stays open if you close an SSH tab or dismiss the window while XPipe is still running in the background.
 
-### What happens when you press the hotkey
+### How does an image reach the input box after Alt+Shift+V?
 
 ```mermaid
 flowchart LR
@@ -35,7 +35,11 @@ flowchart LR
     C -->|"Terminal Ctrl+Shift+V"| D
 ```
 
-The Linux receiver, tested on Debian, returns an absolute path for each image, file, or folder it receives. If the automatic paste checks pass, ClipBridge writes the paths to the clipboard and triggers terminal paste. These paths stay out of `Win+V` history.
+1. **Read and upload.** Copy an image and press `Alt+Shift+V`. ClipBridge reads the Windows clipboard and uploads the image to Linux over its dedicated persistent SSH connection.
+2. **Save and return the path.** The Linux receiver verifies and stores the image, then sends its absolute path back to Windows.
+3. **Paste into the current input.** If automatic paste is enabled and the checks pass, ClipBridge writes the path to the Windows clipboard and triggers `Ctrl+Shift+V` in the terminal. An agent that recognizes image paths, such as Codex CLI, displays the image as an attachment. The path stays out of `Win+V` history.
+
+Regular files and folders follow the same flow. Their absolute Linux paths appear in the input box.
 
 ## Quick start
 
