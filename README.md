@@ -6,7 +6,7 @@ clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboa
 
 > **Deploying with an agent?** Ask it to read [AGENTS.md](AGENTS.md) and [the deployment dependencies](DEPENDENCIES.md) first, then use an installation directory and SSH alias that fit your setup.
 
-![Simulated demo: an image from Windows appears in remote Codex after an SSH upload.](docs/clipbridge-demo.gif)
+![Live recording: ClipBridge uploads a Windows image over SSH, shows upload progress, and pastes an image attachment into remote OpenCode.](docs/clipbridge-demo.gif)
 
 ## Architecture
 
