@@ -76,10 +76,22 @@ function Add-FileEntry([string]$path, [string]$relative, [int]$rootIndex, [strin
     $attributes = [IO.File]::GetAttributes($path)
     if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Links and junctions are not supported.' }
     $name = [IO.Path]::GetFileName($relative)
-    [byte[]]$bytes = [IO.File]::ReadAllBytes($path)
-    if ($bytes.LongLength -gt 128MB) { throw 'A file exceeds the 128 MiB limit.' }
+    $source = [IO.File]::OpenRead($path)
+    try {
+        $size = $source.Length
+        if ($size -gt 128MB) { throw 'A file exceeds the 128 MiB limit.' }
+        if ($script:totalBytes + $size -gt 256MB) { throw 'The selection exceeds the 256 MiB limit.' }
+        [byte[]]$bytes = [byte[]]::new([int]$size)
+        $offset = 0
+        while ($offset -lt $bytes.Length) {
+            $count = $source.Read($bytes, $offset, $bytes.Length - $offset)
+            if ($count -eq 0) { throw 'A file became shorter while it was being read.' }
+            $offset += $count
+        }
+    } finally {
+        $source.Dispose()
+    }
     $script:totalBytes += $bytes.LongLength
-    if ($script:totalBytes -gt 256MB) { throw 'The selection exceeds the 256 MiB limit.' }
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
     finally { $sha.Dispose() }
@@ -91,7 +103,8 @@ function Add-FileEntry([string]$path, [string]$relative, [int]$rootIndex, [strin
     $script:payloads.Add($bytes)
 }
 
-function Add-DirectoryEntry([string]$path, [string]$relative, [int]$rootIndex) {
+function Add-DirectoryEntry([string]$path, [string]$relative, [int]$rootIndex, [int]$depth = 1) {
+    if ($depth -gt 32) { throw 'Folder nesting exceeds 32 levels.' }
     if ($script:entries.Count -ge 200) { throw 'Selection exceeds 200 files or directory entries.' }
     $attributes = [IO.File]::GetAttributes($path)
     if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Links and junctions are not supported.' }
@@ -100,15 +113,14 @@ function Add-DirectoryEntry([string]$path, [string]$relative, [int]$rootIndex) {
         source_relpath = $relative.Replace('\', '/'); source_root_index = $rootIndex;
         entry_type = 'directory'; size = 0; sha256 = $null; kind = 'files'; origin = 'explorer'
     })
-    $depth = ($relative -split '[\\/]').Count
-    if ($depth -gt 32) { throw 'Folder nesting exceeds 32 levels.' }
-    foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($path) | Sort-Object) {
+    foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($path)) {
+        if ($script:entries.Count -ge 200) { throw 'Selection exceeds 200 files or directory entries.' }
         $childName = [IO.Path]::GetFileName($child)
-        $childRelative = $relative.TrimEnd('\') + '\' + $childName
+        $childRelative = $relative + '\' + $childName
         $childAttributes = [IO.File]::GetAttributes($child)
         if ($childAttributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Links and junctions are not supported.' }
         if ($childAttributes -band [IO.FileAttributes]::Directory) {
-            Add-DirectoryEntry $child $childRelative $rootIndex
+            Add-DirectoryEntry $child $childRelative $rootIndex ($depth + 1)
         } else {
             Add-FileEntry $child $childRelative $rootIndex 'files' 'explorer'
         }
