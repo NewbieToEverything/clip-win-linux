@@ -8,13 +8,28 @@ ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux。
 
 ## 架构
 
+### 一次上传
+
 ```mermaid
 flowchart TD
-    A["1. 在 Windows 按 Alt+Shift+V"] --> B["2. ClipBridge 读取当前剪贴板里的图片、文件或文件夹<br/>通过专用 SSH 长连接上传到 Linux<br/>Linux 返回每项的绝对路径，ClipBridge 写入 Windows 剪贴板"]
+    A["1. 在 Windows 按 Alt+Shift+V"] --> B["2. ClipBridge 读取当前剪贴板里的图片、文件或文件夹<br/>通过专用 SSH 长连接上传到 Linux<br/>Linux 返回每项的绝对路径<br/>符合自动粘贴条件时写入 Windows 剪贴板"]
     B --> C["3. 在已打开的 Windows 终端执行粘贴<br/>支持图片路径识别的 Agent 可显示图片附件标签<br/>普通文件和文件夹显示为路径"]
 ```
 
 上传和终端使用各自的 SSH 连接。XPipe 完全退出后，联动启动器会等正在进行的上传结束，再关闭 ClipBridge。Linux 接收器通过 SSH 标准输入输出工作，无需图形会话。当前在 Debian 上验证过。其他发行版需要 Python 3、Pillow 和 OpenSSH，自动清理脚本还需要 systemd 用户服务，或者由该系统的定时工具运行清理命令。
+
+### 长连接随 XPipe 启停（可选）
+
+```mermaid
+flowchart TD
+    A["从联动快捷方式打开 XPipe"] --> B["启动 ClipBridge，后台预连接 Linux"]
+    B --> C["XPipe 运行期间，多次上传复用一条专用 SSH 连接"]
+    C --> D["完全退出 XPipe"]
+    D --> E["如有上传在进行，等待上传结束"]
+    E --> F["退出 ClipBridge，关闭专用 SSH 连接"]
+```
+
+联动跟踪的是 XPipe 进程。只关闭一个 SSH 标签页，或者关窗口后 XPipe 仍在后台，连接会继续保留。
 
 ## 快速开始
 

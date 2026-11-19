@@ -8,13 +8,28 @@ ClipBridge sends images, files, and folders from the Windows clipboard to Linux 
 
 ## Architecture
 
+### One upload
+
 ```mermaid
 flowchart TD
-    A["1. Press Alt+Shift+V on Windows"] --> B["2. ClipBridge reads images, files, or folders from the current clipboard<br/>Uploads them to Linux over a dedicated persistent SSH connection<br/>Linux returns an absolute path for each item, which ClipBridge writes to the Windows clipboard"]
+    A["1. Press Alt+Shift+V on Windows"] --> B["2. ClipBridge reads images, files, or folders from the current clipboard<br/>Uploads them to Linux over a dedicated persistent SSH connection<br/>Linux returns an absolute path for each item<br/>ClipBridge writes the paths to the clipboard when automatic paste is allowed"]
     B --> C["3. Paste into the open Windows terminal<br/>Agents that recognize image paths can show image attachment labels<br/>Regular files and folders appear as paths"]
 ```
 
 With automatic paste enabled, ClipBridge writes the returned paths after checking focus, the timeout, and whether the clipboard changed. It excludes the paths from `Win+V` history. Uploads and the terminal use separate SSH connections. The Linux receiver uses SSH standard input and output and works without a graphical session. The setup has been verified on Debian. Other distributions need Python 3, Pillow, and OpenSSH. For scheduled cache cleanup, use a systemd user timer or run the cleanup command with your system's scheduler.
+
+### SSH connection lifecycle with XPipe (optional)
+
+```mermaid
+flowchart TD
+    A["Open XPipe from the integration shortcut"] --> B["Start ClipBridge and connect to Linux in the background"]
+    B --> C["Reuse the dedicated SSH connection across uploads while XPipe runs"]
+    C --> D["Exit XPipe completely"]
+    D --> E["Wait for any active upload to finish"]
+    E --> F["Exit ClipBridge and close the dedicated SSH connection"]
+```
+
+The launcher follows the XPipe process. The connection stays open if you close an SSH tab or dismiss the window while XPipe is still running in the background.
 
 ## Quick start
 
