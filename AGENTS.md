@@ -4,8 +4,6 @@
 
 ## 项目技能
 
-制作或更新实机演示 GIF 时，读取 [record-clipbridge-demo](skills/record-clipbridge-demo/SKILL.md)。
-
 ## README 同步
 
 [README.zh.md](README.zh.md) 是主维护版。修改 README 内容时先更新中文，再在同一次变更中同步英文 [README.md](README.md)。两版的架构、命令、配置默认值、限制和验收说明应一致。GitHub 默认展示英文，两版开头保留语言链接。
