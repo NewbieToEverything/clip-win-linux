@@ -8,19 +8,18 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
 
 ## 架构
 
-### ClipBridge 怎么部署
-
-Windows 运行 ClipBridge 客户端，Linux 安装接收器。客户端通过专用 SSH 长连接启动接收器并传输文件，已打开的终端继续使用自己的 SSH 会话。ClipBridge 随用于发起终端会话的程序启动和退出。仓库提供的是 XPipe 启动器，下面以它为例。
+### ClipBridge 由什么组成
 
 ```mermaid
 flowchart LR
-    A["打开 XPipe"] --> B["启动 ClipBridge"]
-    B -->|"专用 SSH 长连接"| C["Linux 接收器"]
-    C --> D["退出 XPipe"]
-    D --> E["收尾并断开"]
+    W["Windows<br/>ClipBridge 热键程序与上传代理"]
+    L["Linux<br/>OpenSSH Server 与 ClipBridge 接收器"]
+    W <-->|"专用 SSH 长连接"| L
 ```
 
-从联动快捷方式打开 XPipe 时，ClipBridge 在后台预连接。完全退出 XPipe 后，ClipBridge 等当前上传结束再断开。只关闭一个 SSH 标签页，或者关窗口后 XPipe 仍在后台，连接会继续保留。
+Windows 上传代理通过 OpenSSH 启动 Linux 上的接收器（`clipbridge serve --stdio`）。已打开的终端使用自己的 SSH 会话。
+
+从联动快捷方式打开 XPipe，ClipBridge 会在后台预连接。完全退出 XPipe 后，ClipBridge 等当前上传结束再断开。只关闭 SSH 标签页，或关窗口后 XPipe 仍在后台，连接会继续保留。
 
 ### 按下 Alt+Shift+V 后，图片怎么进入输入框？
 

@@ -8,19 +8,18 @@ clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboa
 
 ## Architecture
 
-### How ClipBridge is deployed
-
-The ClipBridge client runs on Windows. It starts the Linux receiver and transfers files over a dedicated persistent SSH connection. Your terminal keeps its own SSH session. ClipBridge starts and stops with the application that opens your terminal sessions. The launcher included in this repository uses XPipe, as shown below.
+### ClipBridge components
 
 ```mermaid
 flowchart LR
-    A["Open XPipe"] --> B["Start ClipBridge"]
-    B -->|"Persistent SSH"| C["Linux receiver"]
-    C --> D["Exit XPipe"]
-    D --> E["Finish and disconnect"]
+    W["Windows<br/>ClipBridge hotkey app and upload agent"]
+    L["Linux<br/>OpenSSH server and ClipBridge receiver"]
+    W <-->|"Dedicated persistent SSH connection"| L
 ```
 
-Open XPipe using the integration shortcut to connect in the background. When XPipe exits completely, ClipBridge finishes any active upload before disconnecting. The connection stays open if you close an SSH tab or dismiss the window while XPipe is still running in the background.
+The Windows upload agent starts the Linux receiver (`clipbridge serve --stdio`) through OpenSSH. The open terminal uses its own SSH session.
+
+Open XPipe from the integration shortcut and ClipBridge connects in the background. When XPipe exits completely, ClipBridge finishes any active upload before disconnecting. Closing an SSH tab, or closing the window while XPipe stays in the background, leaves the connection open.
 
 ### How does an image reach the input box after Alt+Shift+V?
 
