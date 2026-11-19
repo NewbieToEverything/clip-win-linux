@@ -2,20 +2,20 @@
 
 <p align="center"><a href="README.md">English</a> | <strong>简体中文</strong></p>
 
-ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux，并可把远端路径自动粘贴到终端。
+ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux。每个上传的图片、文件或文件夹都会返回 Linux 绝对路径。开启自动粘贴后，ClipBridge 会把这些路径贴到 Windows 上的 SSH 终端。
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    P["Windows 任务栏快捷方式"] --> X["XPipe"]
+    P["Windows 任务栏快捷方式（可选）"] --> X["XPipe"]
     P --> H["ClipBridge 热键程序"]
     C["Windows 剪贴板<br/>图片、文件或文件夹"] -->|"Alt+Shift+V"| H
     H --> S["专用 SSH 长连接"]
     S --> L["Linux 接收器<br/>校验、保留原名、写入临时缓存"]
-    L -->|"返回绝对路径"| H
+    L -->|"返回各项的 Linux 绝对路径"| H
     H -->|"写入当前剪贴板，不加入 Win+V 历史"| V["Windows Terminal 执行粘贴"]
-    V -->|"XPipe 的交互 SSH 会话"| A["Linux 上的 Agent 输入框"]
+    V -->|"交互 SSH 会话"| A["Linux 上的终端应用"]
 ```
 
 上传和终端使用各自的 SSH 连接。XPipe 完全退出后，联动启动器会等正在进行的上传结束，再关闭 ClipBridge。Linux 接收器通过 SSH 标准输入输出工作，无需图形会话。当前在 Debian 上验证过。其他发行版需要 Python 3、Pillow 和 OpenSSH，自动清理脚本还需要 systemd 用户服务，或者由该系统的定时工具运行清理命令。
@@ -33,7 +33,15 @@ flowchart LR
    ```
 
 4. 在 Windows 构建环境运行 `windows/build-hotkey.ps1`。将生成的 `ClipBridgeHotkey.exe`、`clipbridge-agent.ps1` 和 `clipbridge-notify.ps1` 放在同一目录。
-5. 启动 EXE 后复制图片或文件，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后 Debian 保存原名文件并返回绝对路径。
+5. 启动 EXE 后复制图片、文件或文件夹，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后，接收端保留文件名和目录结构，并返回各项的 Linux 绝对路径。
+
+### 开启自动粘贴（可选）
+
+在 EXE 所在目录运行以下命令。若已有实例正在运行，先执行 `.\ClipBridgeHotkey.exe --stop`，再用新参数启动。
+
+```powershell
+.\ClipBridgeHotkey.exe --auto-paste WindowsTerminal.exe
+```
 
 ### 随 XPipe 启停（可选）
 
@@ -57,10 +65,10 @@ flowchart LR
 
 ## 用法
 
-- `Alt+Shift+V`：读取 Windows 剪贴板并上传。自动粘贴时会把回执路径写入当前 Windows 剪贴板，并标记为不加入 `Win+V` 历史。同一 ClipBridge 进程复用专用 SSH 通道。可在图片或文件传输期间切换窗口，回执完成后程序仅在原前台窗口仍匹配且未超时的情况下输入路径。
-- 自动粘贴通过 Windows 剪贴板和终端的 Ctrl+Shift+V 完成。图片是否成为 Agent 附件，须按 [桌面验收表](tests/manual-test-matrix.md) 在目标终端和输入框验证；未验证前请手动确认输入结果。
+- `Alt+Shift+V`：读取 Windows 剪贴板并上传。自动粘贴时会把回执路径写入当前 Windows 剪贴板，并标记为不加入 `Win+V` 历史。同一 ClipBridge 进程复用专用 SSH 通道。可在图片或文件传输期间切换窗口，收到成功回执后，程序只在原前台窗口仍匹配、未超时且剪贴板未被更改时尝试粘贴。跳过时可在对应工作空间运行 `clipbridge latest` 取回路径。
+- 自动粘贴通过 Windows 剪贴板和终端的 Ctrl+Shift+V 完成。远端 Codex CLI 已验证能把图片路径识别成附件。其他终端和 Agent 请按 [桌面验收表](tests/manual-test-matrix.md) 验证。普通文件和文件夹的输出仍是路径。
 - 进度卡片不抢焦点，按原窗口所在屏幕右下角显示；百分比只用于已知总字节的上传阶段。高 DPI 清晰度需要在 Windows 100%、125%、150%、200% 缩放下实测。
-- `windows/clipbridge-send.ps1`：一次性手动上传工具，兼容 PNG 与归档输入；成功后在标准输出返回路径。
+- `windows/clipbridge-send.ps1`：一次性手动上传工具，兼容 PNG 与归档输入；成功后在标准输出返回 Linux 绝对路径。
 - `clipbridge doctor`：检查工作空间和存储。
 - `clipbridge latest`：查看该工作空间最近成功回执。
 - `clipbridge stats --all`：查看缓存占用统计。
