@@ -1,72 +1,72 @@
 # clip-win-linux
 
-ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux，并可把远端路径自动粘贴到终端。
+<p align="center"><strong>English</strong> | <a href="README.zh.md">简体中文</a></p>
 
-**Windows clipboard to Linux over SSH.** Send clipboard screenshots, files, and folders to a remote Linux host, then paste the remote path into your terminal. Works with XPipe and Windows Terminal, with image paste verified in remote Codex CLI on Debian.
+ClipBridge sends screenshots, files, and folders from the Windows clipboard to Linux over SSH and can automatically paste the remote path into your terminal.
 
-## 架构
+## Architecture
 
 ```mermaid
 flowchart LR
-    P["Windows 任务栏快捷方式"] --> X["XPipe"]
-    P --> H["ClipBridge 热键程序"]
-    C["Windows 剪贴板<br/>图片、文件或文件夹"] -->|"Alt+Shift+V"| H
-    H --> S["专用 SSH 长连接"]
-    S --> L["Linux 接收器<br/>校验、保留原名、写入临时缓存"]
-    L -->|"返回绝对路径"| H
-    H -->|"写入当前剪贴板，不加入 Win+V 历史"| V["Windows Terminal 执行粘贴"]
-    V -->|"XPipe 的交互 SSH 会话"| A["Linux 上的 Agent 输入框"]
+    P["Windows taskbar shortcut"] --> X["XPipe"]
+    P --> H["ClipBridge hotkey app"]
+    C["Windows clipboard<br/>Image, file, or folder"] -->|"Alt+Shift+V"| H
+    H --> S["Dedicated persistent SSH connection"]
+    S --> L["Linux receiver<br/>Verify data, preserve names, cache files"]
+    L -->|"Return absolute paths"| H
+    H -->|"Write paths to clipboard, exclude from Win+V history"| V["Paste in Windows Terminal"]
+    V -->|"Interactive SSH session opened by XPipe"| A["Agent input on Linux"]
 ```
 
-上传和终端使用各自的 SSH 连接。XPipe 完全退出后，联动启动器会等正在进行的上传结束，再关闭 ClipBridge。Linux 接收器通过 SSH 标准输入输出工作，无需图形会话。当前在 Debian 上验证过。其他发行版需要 Python 3、Pillow 和 OpenSSH，自动清理脚本还需要 systemd 用户服务，或者由该系统的定时工具运行清理命令。
+Uploads and the terminal use separate SSH connections. When XPipe exits, the optional launcher waits for any active upload before closing ClipBridge. The Linux receiver uses SSH standard input and output and works without a graphical session. The setup has been verified on Debian. Other distributions need Python 3, Pillow, and OpenSSH. For scheduled cache cleanup, use a systemd user timer or run the cleanup command with your system's scheduler.
 
-## 快速开始
+## Quick start
 
-先按 [部署依赖](DEPENDENCIES.md) 检查 Linux 接收端、Windows 运行环境和构建工具。
+See [Deployment dependencies](DEPENDENCIES.md) for Linux receiver requirements, Windows runtime components, and build tools.
 
-1. Debian 安装 Python 3 和 Pillow 后，在仓库运行 `bash debian/install.sh`。该脚本安装接收器并启用每小时缓存清理计时器。
-2. Debian sshd 必须允许 `CLIPBRIDGE_WS` 环境变量。检查并重载 sshd 的步骤见 [Agent 部署指南](AGENTS.md#debian-端)。保持现有 SSH 会话，直到新连接验证成功。
-3. Windows OpenSSH 配置中的 `Host debian` 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。验证：
+1. On Debian, install Python 3 and Pillow, then run `bash debian/install.sh` from the repository. This installs the receiver and enables hourly cache cleanup.
+2. Configure Debian's SSH server to accept `CLIPBRIDGE_WS`. See the [deployment guide](AGENTS.md#debian-端) for how to check and reload sshd. Keep your existing SSH session open until the new connection works.
+3. In the Windows OpenSSH configuration, add `SetEnv CLIPBRIDGE_WS=workspace-a` to the `Host debian` entry. Use `workspace-b` on a second device. Verify the connection:
 
    ```powershell
    ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes debian '~/.local/bin/clipbridge doctor'
    ```
 
-4. 在 Windows 构建环境运行 `windows/build-hotkey.ps1`。将生成的 `ClipBridgeHotkey.exe`、`clipbridge-agent.ps1` 和 `clipbridge-notify.ps1` 放在同一目录。
-5. 启动 EXE 后复制图片或文件，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后 Debian 保存原名文件并返回绝对路径。
+4. Run `windows/build-hotkey.ps1` in a supported Windows build environment. Place the resulting `ClipBridgeHotkey.exe` alongside `clipbridge-agent.ps1` and `clipbridge-notify.ps1`.
+5. Run the EXE, copy an image or file, and press `Alt+Shift+V`. The Direct2D and DirectWrite progress card appears after about 300 ms to avoid flashing for quick uploads. Debian preserves the original names and returns absolute paths.
 
-### 随 XPipe 启停（可选）
+### Start and stop with XPipe (optional)
 
-1. 先用 `install-user-startup.ps1` 设置 `ClipBridge Hotkey` 计划任务的启动参数。联动脚本从这个任务读取参数。
-2. 把 `start-with-xpipe.ps1` 和 `start-with-xpipe.vbs` 放到 EXE 同目录。把原 XPipe 快捷方式复制到该目录，命名为 `XPipe-original.lnk`。
-3. 新建 Windows 快捷方式。目标设为 `wscript.exe //B //Nologo "D:\Tools\ClipBridge\start-with-xpipe.vbs"`，按实际安装位置调整路径，并将快捷方式固定到任务栏。
-4. 在 Windows PowerShell 中运行 `Stop-ScheduledTask -TaskName 'ClipBridge Hotkey'` 和 `Disable-ScheduledTask -TaskName 'ClipBridge Hotkey'`。保留此任务，供启动器读取参数。以后从新快捷方式启动 XPipe。
+1. Run `install-user-startup.ps1` to configure the `ClipBridge Hotkey` scheduled task. The launcher reads its startup arguments from this task.
+2. Place `start-with-xpipe.ps1` and `start-with-xpipe.vbs` alongside the EXE. Copy your original XPipe shortcut into that directory as `XPipe-original.lnk`.
+3. Create a Windows shortcut with the target `wscript.exe //B //Nologo "D:\Tools\ClipBridge\start-with-xpipe.vbs"`. Adjust the path for your installation and pin the shortcut to the taskbar.
+4. Run `Stop-ScheduledTask -TaskName 'ClipBridge Hotkey'` and `Disable-ScheduledTask -TaskName 'ClipBridge Hotkey'` in Windows PowerShell. Keep the task so the launcher can read its arguments. Use the new shortcut to open XPipe.
 
-## 配置
+## Configuration
 
-| 项目 | 默认值 | 含义 |
+| Setting | Default | Purpose |
 |---|---|---|
-| SSH 别名 `debian` | `debian` | Windows 端专用长连接所用别名；使用该别名的现有密钥和主机信任配置。 |
-| SSH `SetEnv CLIPBRIDGE_WS` | 必填 | `workspace-a` 或 `workspace-b`，隔离不同 Windows 设备的存储目录。 |
-| `--auto-paste terminal.exe` | 关闭 | 允许向指定的前台终端执行自动粘贴，例如 `WindowsTerminal.exe`。 |
-| `--paste-timeout seconds` | 8 秒 | 自动粘贴的等待上限，范围 1–60 秒。 |
-| PNG 单文件上限 | 15 MiB | Windows 剪贴板位图编码成 PNG 后的大小上限。 |
-| 普通文件上限 | 128 MiB | 单个文件大小。 |
-| 单次上传上限 | 256 MiB | 一批文件的总大小；最多 200 个文件或目录项。 |
-| 缓存 TTL | 24 小时 | Debian 接收文件默认保留期；近期文件及配额回收另受清理器保护。 |
+| SSH alias | `debian` | Dedicated Windows upload connection. Uses the alias's existing credentials and host key settings. |
+| SSH `SetEnv CLIPBRIDGE_WS` | Required | Use `workspace-a` or `workspace-b` to keep uploads from different devices in separate directories. |
+| `--auto-paste terminal.exe` | Off | Automatically paste into the specified foreground terminal, such as `WindowsTerminal.exe`. |
+| `--paste-timeout seconds` | 8 seconds | Maximum wait for automatic paste, from 1 to 60 seconds. |
+| PNG limit | 15 MiB | Maximum size after encoding a clipboard bitmap as PNG. |
+| File limit | 128 MiB | Maximum size per regular file. |
+| Batch limit | 256 MiB | Maximum batch size, with up to 200 file and directory entries. |
+| Cache lifetime | 24 hours | Default retention. Quotas and recent-upload protection also govern cleanup. |
 
-## 用法
+## Usage
 
-- `Alt+Shift+V`：读取 Windows 剪贴板并上传。自动粘贴时会把回执路径写入当前 Windows 剪贴板，并标记为不加入 `Win+V` 历史。同一 ClipBridge 进程复用专用 SSH 通道。可在图片或文件传输期间切换窗口，回执完成后程序仅在原前台窗口仍匹配且未超时的情况下输入路径。
-- 自动粘贴通过 Windows 剪贴板和终端的 Ctrl+Shift+V 完成。图片是否成为 Agent 附件，须按 [桌面验收表](tests/manual-test-matrix.md) 在目标终端和输入框验证；未验证前请手动确认输入结果。
-- 进度卡片不抢焦点，按原窗口所在屏幕右下角显示；百分比只用于已知总字节的上传阶段。高 DPI 清晰度需要在 Windows 100%、125%、150%、200% 缩放下实测。
-- `windows/clipbridge-send.ps1`：一次性手动上传工具，兼容 PNG 与归档输入；成功后在标准输出返回路径。
-- `clipbridge doctor`：检查工作空间和存储。
-- `clipbridge latest`：查看该工作空间最近成功回执。
-- `clipbridge stats --all`：查看缓存占用统计。
-- `clipbridge prune --all [--dry-run]`：执行或预览缓存清理。
-- `clipbridge serve --stdio`：供 Windows 持久 SSH 通道使用的帧式协议入口。
+- Press `Alt+Shift+V` to upload from the Windows clipboard. ClipBridge reuses its dedicated SSH connection. Automatic paste requires a matching foreground window and an unexpired timeout. It writes the returned paths to the current clipboard and marks them for exclusion from `Win+V` history.
+- Automatic paste uses the terminal's `Ctrl+Shift+V` shortcut. Image paths have been verified to become attachments in remote Codex CLI on Debian. Verify your own terminal and agent using the [desktop checklist](tests/manual-test-matrix.md).
+- The progress card appears in the lower-right corner of the original window's monitor without taking focus. It shows a percentage when the total byte count is known. Check display quality at 100%, 125%, 150%, and 200% scaling on Windows.
+- `windows/clipbridge-send.ps1` performs a one-off PNG or archive upload and prints the returned path.
+- `clipbridge doctor` checks workspace routing and storage.
+- `clipbridge latest` shows the latest successful receipt for the workspace.
+- `clipbridge stats --all` reports cache usage.
+- `clipbridge prune --all [--dry-run]` runs or previews cache cleanup.
+- `clipbridge serve --stdio` is the framed protocol endpoint for the persistent SSH connection.
 
-文件保存在 `~/.local/share/clipbridge/<workspace>/batches/`。清理器每小时运行，按 24 小时 TTL、磁盘配额和近期文件保护策略回收旧数据。缓存不能作为唯一备份。
+Files are stored under `~/.local/share/clipbridge/<workspace>/batches/`. Hourly cleanup applies the 24-hour lifetime, disk quotas, and recent-upload protection. Keep a separate copy of any files you need long term.
 
-接收端测试：`/usr/bin/python3 -B -m unittest discover -s tests -v`。Windows PowerShell 与真实终端的桌面验收步骤见 [桌面验收表](tests/manual-test-matrix.md)。
+Run receiver tests with `/usr/bin/python3 -B -m unittest discover -s tests -v`. See the [desktop checklist](tests/manual-test-matrix.md) for Windows PowerShell and terminal verification.

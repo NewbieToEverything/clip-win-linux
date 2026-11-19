@@ -2,6 +2,10 @@
 
 执行 ClipBridge 部署时先读本页与 [README](README.md)，先按 [部署依赖](DEPENDENCIES.md) 检查两端环境，再按 [桌面验收表](tests/manual-test-matrix.md) 验证实际终端行为。
 
+## README 同步
+
+[README.zh.md](README.zh.md) 是主维护版。修改 README 内容时先更新中文，再在同一次变更中同步英文 [README.md](README.md)。两版的架构、命令、配置默认值、限制和验收说明应一致。GitHub 默认展示英文，两版开头保留语言链接。
+
 ## 目标与约束
 
 - 上传只读取剪贴板；自动粘贴会用回执路径覆盖当前剪贴板，并标记为不加入 Win+V 历史。原文件名、相对目录结构和内容哈希必须由 Debian 回执确认。
