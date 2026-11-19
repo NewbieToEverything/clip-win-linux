@@ -8,7 +8,21 @@ ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux。
 
 ## 架构
 
-### 一次上传
+### ClipBridge 怎么部署
+
+Windows 运行 ClipBridge 客户端，Linux 安装接收器。客户端通过专用 SSH 长连接启动接收器并传输文件，已打开的终端继续使用自己的 SSH 会话。下图展示可选的 XPipe 启停联动。
+
+```mermaid
+flowchart LR
+    A["打开 XPipe"] --> B["启动 ClipBridge"]
+    B -->|"专用 SSH 长连接"| C["Linux 接收器"]
+    C --> D["退出 XPipe"]
+    D --> E["收尾并断开"]
+```
+
+从联动快捷方式打开 XPipe 时，ClipBridge 在后台预连接。完全退出 XPipe 后，ClipBridge 等当前上传结束再断开。只关闭一个 SSH 标签页，或者关窗口后 XPipe 仍在后台，连接会继续保留。
+
+### 按下热键后
 
 ```mermaid
 flowchart LR
@@ -22,18 +36,6 @@ flowchart LR
 ```
 
 图片、文件和文件夹上传到 Linux。接收服务（已在 Debian 验证）为每项返回绝对路径。自动粘贴检查通过后，ClipBridge 写入路径并触发终端粘贴。路径不加入 `Win+V` 历史。
-
-### 长连接随 XPipe 启停（可选）
-
-```mermaid
-flowchart LR
-    A["打开 XPipe"] --> B["预连接 SSH"]
-    B --> C["复用连接"]
-    C --> D["退出 XPipe"]
-    D --> E["收尾并断开"]
-```
-
-从联动快捷方式打开 XPipe 时，ClipBridge 在后台预连接。完全退出 XPipe 后，ClipBridge 等当前上传结束再断开。只关闭一个 SSH 标签页，或者关窗口后 XPipe 仍在后台，连接会继续保留。
 
 ## 快速开始
 

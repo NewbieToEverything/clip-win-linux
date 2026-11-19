@@ -8,7 +8,21 @@ ClipBridge sends images, files, and folders from the Windows clipboard to Linux 
 
 ## Architecture
 
-### One upload
+### How ClipBridge is deployed
+
+The ClipBridge client runs on Windows. It starts the Linux receiver and transfers files over a dedicated persistent SSH connection. Your terminal keeps its own SSH session. The diagram shows the optional XPipe integration.
+
+```mermaid
+flowchart LR
+    A["Open XPipe"] --> B["Start ClipBridge"]
+    B -->|"Persistent SSH"| C["Linux receiver"]
+    C --> D["Exit XPipe"]
+    D --> E["Finish and disconnect"]
+```
+
+Open XPipe using the integration shortcut to connect in the background. When XPipe exits completely, ClipBridge finishes any active upload before disconnecting. The connection stays open if you close an SSH tab or dismiss the window while XPipe is still running in the background.
+
+### What happens when you press the hotkey
 
 ```mermaid
 flowchart LR
@@ -22,18 +36,6 @@ flowchart LR
 ```
 
 The Linux receiver, tested on Debian, returns an absolute path for each image, file, or folder it receives. If the automatic paste checks pass, ClipBridge writes the paths to the clipboard and triggers terminal paste. These paths stay out of `Win+V` history.
-
-### SSH connection lifecycle with XPipe (optional)
-
-```mermaid
-flowchart LR
-    A["Open XPipe"] --> B["Connect SSH"]
-    B --> C["Reuse connection"]
-    C --> D["Exit XPipe"]
-    D --> E["Finish and disconnect"]
-```
-
-Open XPipe using the integration shortcut to connect in the background. When XPipe exits completely, ClipBridge finishes any active upload before disconnecting. The connection stays open if you close an SSH tab or dismiss the window while XPipe is still running in the background.
 
 ## Quick start
 
