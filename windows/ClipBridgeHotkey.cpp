@@ -834,8 +834,9 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
     if (message == WM_CLOSE) {
         closing = true;
         if (startupConnect) startupConnect->store(true);
-        if (active) active->store(true);
-        else {
+        if (active) {
+            if (wParam == 0) active->store(true);
+        } else {
             { std::lock_guard<std::mutex> lock(agentMutex); closeAgent(); }
             DestroyWindow(hwnd);
         }
@@ -862,11 +863,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
     if (argc == 2) {
         const std::wstring action = argv[1];
-        if (action == L"--stop" || action == L"--cancel-upload") {
+        if (action == L"--stop" || action == L"--drain-stop" || action == L"--cancel-upload") {
             LocalFree(argv);
             const HWND existing = FindWindowW(windowClass, title);
             if (!existing) return 0;
-            return PostMessageW(existing, action == L"--stop" ? WM_CLOSE : cancelUpload, 0, 0)
+            return PostMessageW(existing, action == L"--cancel-upload" ? cancelUpload : WM_CLOSE,
+                action == L"--drain-stop" ? 1 : 0, 0)
                 ? 0 : 1;
         }
     }
