@@ -35,7 +35,7 @@ flowchart LR
 
 - **① → ②** **读取并上传。** 按下 `Alt+Shift+V` 后，ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
 - **③** **保存并返回路径。** Linux 接收器校验并保存图片，然后把它的绝对路径返回给 Windows。
-- **④** **贴进当前输入框。** 开启自动粘贴且检查通过时，ClipBridge 把路径写入 Windows 剪贴板并触发终端的 `Ctrl+Shift+V`。支持识别图片路径的 Agent（例如 Codex CLI）会把它显示成图片附件。路径不会加入 `Win+V` 历史。
+- **④** **贴进当前输入框。** 收到成功回执后，如果当前剪贴板没有变化，ClipBridge 把路径写入剪贴板。开启自动粘贴且终端检查通过时，程序再触发 `Ctrl+Shift+V`。支持识别图片路径的 Agent（例如 Codex CLI）会把它显示成图片附件。路径不会加入 `Win+V` 历史。
 
 普通文件和文件夹走同一条流程，输入框里显示的是各自的 Linux 绝对路径。
 
@@ -52,7 +52,7 @@ flowchart LR
    ```
 
 4. 在 Windows 构建环境运行 `windows/build-hotkey.ps1`。将生成的 `ClipBridgeHotkey.exe`、`clipbridge-agent.ps1` 和 `clipbridge-notify.ps1` 放在同一目录。
-5. 在安装目录运行 `./ClipBridgeHotkey.exe --ssh-host linux`，再复制图片、文件或文件夹，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后，接收端保留文件名和目录结构，并返回各项的 Linux 绝对路径。
+5. 在安装目录运行 `./ClipBridgeHotkey.exe --ssh-host linux`，再复制图片、文件或文件夹，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，按热键后立即显示。成功后，接收端保留文件名和目录结构，并返回各项的 Linux 绝对路径。
 
 ### 开启自动粘贴（可选）
 
@@ -88,9 +88,9 @@ XPipe 完全退出后，联动启动器会等正在进行的上传结束，再�
 
 ## 用法
 
-- `Alt+Shift+V`：读取 Windows 剪贴板并上传。自动粘贴时会把回执路径写入当前 Windows 剪贴板，并标记为不加入 `Win+V` 历史。同一 ClipBridge 进程复用专用 SSH 通道。可在图片或文件传输期间切换窗口，收到成功回执后，程序只在原前台窗口仍匹配、未超时且剪贴板未被更改时尝试粘贴。跳过时可在对应工作空间运行 `clipbridge latest` 取回路径。
+- `Alt+Shift+V`：读取 Windows 剪贴板并上传。收到成功回执后，如果剪贴板没有变化，ClipBridge 会写入回执路径，并标记为不加入 `Win+V` 历史。同一 ClipBridge 进程复用专用 SSH 通道。可在图片或文件传输期间切换窗口，收到成功回执后，程序只在原前台窗口仍匹配、未超时且剪贴板未被更改时尝试粘贴。跳过自动粘贴时，可以用终端的粘贴快捷键（例如 `Ctrl+V`）。如果路径未写入剪贴板，可在对应工作空间运行 `clipbridge latest` 取回路径。
 - 自动粘贴通过 Windows 剪贴板和终端的 Ctrl+Shift+V 完成。远端 Codex CLI 已验证能把图片路径识别成附件。OpenCode、Pi 和 Hermes 的显示取决于各自版本与输入界面，验收步骤见 [桌面验收表](tests/manual-test-matrix.md)。普通文件和文件夹的输出仍是路径。
-- 进度卡片不抢焦点，按原窗口所在屏幕右下角显示；百分比只用于已知总字节的上传阶段。高 DPI 清晰度需要在 Windows 100%、125%、150%、200% 缩放下实测。
+- 进度卡片不抢焦点，按原窗口所在屏幕右下角显示；进度从 0% 开始，发送时显示字节进度，等待接收确认时保留最终数值。高 DPI 清晰度需要在 Windows 100%、125%、150%、200% 缩放下实测。
 - `windows/clipbridge-send.ps1`：一次性手动上传工具，用 `-SshHost` 指定同一个别名，兼容 PNG 与归档输入；成功后在标准输出返回 Linux 绝对路径。
 - `clipbridge doctor`：检查工作空间和存储。
 - `clipbridge latest`：查看该工作空间最近成功回执。

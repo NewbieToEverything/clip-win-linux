@@ -12,7 +12,7 @@
 
 ## 目标与约束
 
-- 上传只读取剪贴板；自动粘贴会用回执路径覆盖当前剪贴板，并标记为不加入 Win+V 历史。原文件名、相对目录结构和内容哈希必须由 Debian 回执确认。
+- 发送前只读取剪贴板。收到成功回执且剪贴板未变化时，将路径写入剪贴板，并标记为不加入 Win+V 历史。原文件名、相对目录结构和内容哈希必须由 Debian 回执确认。
 - 每台 Windows 使用 SSH `SetEnv CLIPBRIDGE_WS` 路由到独立工作空间。不要把主机密钥检查设为关闭。
 - 使用独立的长期 SSH 子进程通道复用连接，不依赖 XPipe 已打开的终端隧道或同一局域网。
 - 不要把 Unicode 字符输入描述为终端 Paste。需分别验收路径文本、附件标签和 Agent 实际读取图片。
@@ -45,7 +45,7 @@
    回执工作空间必须和该设备映射一致。
 3. 在有 MSVC 或 MinGW 的环境运行 `windows/build-hotkey.ps1`。构建需链接 Win32、Direct2D、DirectWrite 和 DWM 系统库。EXE、`clipbridge-agent.ps1`、`clipbridge-notify.ps1` 放在同一目录。`clipbridge-send.ps1` 是单次手动工具。
 4. 启动 EXE 时传 `--ssh-host linux`，并替换成实际别名。配置登录自启时，向 `install-user-startup.ps1` 传同一个 `-SshHost`。XPipe 联动沿用计划任务的参数。启动后复制新图片或文件并按 `Alt+Shift+V`。检查右下角进度、Debian 文件名与 SHA-256，再到目标输入框检查生成的内容。
-5. 原生进度卡片由 Direct2D/DirectWrite 绘制，超过约 300 ms 才显示，不抢焦点。自动输入受前台窗口、焦点变化与等待时限保护，但无法判断同一个终端窗口内的 pane 或 Agent 当前编辑区。没有通过相应桌面验收前，不应假定图片已成为附件。
+5. 原生进度卡片由 Direct2D/DirectWrite 绘制，按下热键后立即显示，不抢焦点。自动输入受前台窗口、焦点变化与等待时限保护，但无法判断同一个终端窗口内的 pane 或 Agent 当前编辑区。没有通过相应桌面验收前，不应假定图片已成为附件。
 
 ## 协议与缓存
 

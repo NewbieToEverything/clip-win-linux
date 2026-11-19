@@ -35,7 +35,7 @@ flowchart LR
 
 - **① → ②** **Read and upload.** When you press `Alt+Shift+V`, ClipBridge reads the Windows clipboard and uploads the image to Linux over its dedicated persistent SSH connection.
 - **③** **Save and return the path.** The Linux receiver verifies and stores the image, then sends its absolute path back to Windows.
-- **④** **Paste into the current input.** If automatic paste is enabled and the checks pass, ClipBridge writes the path to the Windows clipboard and triggers `Ctrl+Shift+V` in the terminal. An agent that recognizes image paths, such as Codex CLI, displays the image as an attachment. The path stays out of `Win+V` history.
+- **④** **Paste into the current input.** After a successful receipt, ClipBridge writes the path to the Windows clipboard if it has not changed. If automatic paste is enabled and the terminal checks pass, ClipBridge triggers `Ctrl+Shift+V`. An agent that recognizes image paths, such as Codex CLI, displays the image as an attachment. The path stays out of `Win+V` history.
 
 Regular files and folders follow the same flow. Their absolute Linux paths appear in the input box.
 
@@ -52,7 +52,7 @@ Check [Deployment dependencies](DEPENDENCIES.md) first. The default SSH alias is
    ```
 
 4. Run `windows/build-hotkey.ps1` in a supported Windows build environment. Place the resulting `ClipBridgeHotkey.exe` alongside `clipbridge-agent.ps1` and `clipbridge-notify.ps1`.
-5. Run `./ClipBridgeHotkey.exe --ssh-host linux` from the installation directory, copy an image, file, or folder, and press `Alt+Shift+V`. The Direct2D and DirectWrite progress card appears after about 300 ms to avoid flashing for quick uploads. The receiver preserves existing names and directory structure and returns absolute Linux paths for all items.
+5. Run `./ClipBridgeHotkey.exe --ssh-host linux` from the installation directory, copy an image, file, or folder, and press `Alt+Shift+V`. The Direct2D and DirectWrite progress card appears when the hotkey is pressed. The receiver preserves existing names and directory structure and returns absolute Linux paths for all items.
 
 ### Enable automatic paste (optional)
 
@@ -88,9 +88,9 @@ You can use the same lifecycle mechanism with a different terminal application. 
 
 ## Usage
 
-- Press `Alt+Shift+V` to upload from the Windows clipboard. ClipBridge reuses its dedicated SSH connection. Automatic paste requires a matching foreground window, an unexpired timeout, and an unchanged clipboard. If automatic paste is skipped, retrieve the paths with `clipbridge latest` in the corresponding workspace. It writes the returned paths to the current clipboard and marks them for exclusion from `Win+V` history.
+- Press `Alt+Shift+V` to upload from the Windows clipboard. ClipBridge reuses its dedicated SSH connection. Automatic paste requires a matching foreground window, an unexpired timeout, and an unchanged clipboard. ClipBridge writes the returned paths when the clipboard has not changed and excludes them from `Win+V` history. If automatic paste is skipped, use your terminal’s paste shortcut (for example, `Ctrl+V`). If the clipboard could not be updated, use `clipbridge latest` in the corresponding workspace.
 - Automatic paste uses the terminal's `Ctrl+Shift+V` shortcut. Image paths have been verified to become attachments in remote Codex CLI on Debian. For OpenCode, Pi, and Hermes, the display depends on the version and input interface. See the [desktop checklist](tests/manual-test-matrix.md). Regular files and folders still return paths.
-- The progress card appears in the lower-right corner of the original window's monitor without taking focus. It shows a percentage when the total byte count is known. Check display quality at 100%, 125%, 150%, and 200% scaling on Windows.
+- The progress card appears in the lower-right corner of the original window's monitor without taking focus. It starts at 0%, shows byte progress during transfer, and keeps the final count visible while waiting for confirmation. Check display quality at 100%, 125%, 150%, and 200% scaling on Windows.
 - `windows/clipbridge-send.ps1` accepts the same alias via `-SshHost`, performs a one-off PNG or archive upload and prints the returned absolute Linux paths.
 - `clipbridge doctor` checks workspace routing and storage.
 - `clipbridge latest` shows the latest successful receipt for the workspace.

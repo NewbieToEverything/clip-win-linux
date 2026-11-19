@@ -37,12 +37,20 @@ constexpr UINT uploadProgress = WM_APP + 3;
 constexpr UINT connectionFailed = WM_APP + 4;
 constexpr UINT_PTR pasteDeadline = 1;
 constexpr UINT_PTR statusExpiry = 2;
-constexpr UINT_PTR progressDelay = 3;
 constexpr UINT hotkeyId = 1;
 constexpr wchar_t title[] = L"ClipBridge";
 constexpr wchar_t windowClass[] = L"ClipBridgeHotkeyWindow";
 constexpr wchar_t progressClass[] = L"ClipBridgeProgressWindow";
 constexpr wchar_t appId[] = L"ClipBridge.Desktop";
+
+bool useChinese() {
+    static const bool chinese = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+    return chinese;
+}
+
+const wchar_t* ui(const wchar_t* english, const wchar_t* chinese) {
+    return useChinese() ? chinese : english;
+}
 
 enum class TransferPhase {
     ReadingClipboard, Preparing, Encoding, Packing, Connecting, Uploading,
@@ -57,7 +65,6 @@ struct TransferEvent {
     unsigned long long totalBytes{};
     bool totalKnown{};
     std::wstring displayName;
-    std::wstring safeMessage;
 };
 
 struct Upload {
@@ -84,10 +91,10 @@ std::wstring sshHost = L"linux";
 ULONGLONG pasteTimeoutMs = 8000;
 HWND statusWindow;
 HMONITOR statusMonitor;
-std::wstring statusBody;
 std::wstring displayName;
 std::wstring byteLabel;
-std::wstring phaseLabel;
+std::wstring resultLabel;
+std::wstring resultDetail;
 unsigned long long completedBytes;
 unsigned long long totalBytes;
 bool totalKnown;
@@ -105,8 +112,6 @@ ID2D1SolidColorBrush* trackBrush;
 UINT currentDpi = 96;
 std::uint64_t activeRequestId;
 std::atomic_uint64_t nextRequestId{1};
-bool statusWasShown;
-bool progressDelayPending;
 bool deadlineExpired;
 HANDLE agentProcess;
 HANDLE agentJob;
@@ -163,34 +168,33 @@ void drawProgress(HWND hwnd) {
     renderTarget->Clear(D2D1::ColorF(0x202124));
     renderTarget->FillRoundedRectangle(D2D1::RoundedRect(
         D2D1::RectF(0, 0, width, height), 12, 12), backgroundBrush);
-    renderTarget->FillEllipse(D2D1::Ellipse(D2D1::Point2F(22, 24), 4, 4), accentBrush);
-    const auto line = phaseLabel.empty() ? statusBody : phaseLabel;
-    renderTarget->DrawText(line.c_str(), static_cast<UINT32>(line.size()), titleFormat,
-        D2D1::RectF(36, 12, width - 18, 36), foregroundBrush,
-        D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    if (!displayName.empty()) {
-        renderTarget->DrawText(displayName.c_str(), static_cast<UINT32>(displayName.size()), bodyFormat,
-            D2D1::RectF(20, 42, width - 18, 64), mutedBrush,
-            D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
+    constexpr float titleY = 12;
     constexpr float horizontalMargin = 20;
     constexpr float barY = 76;
+    renderTarget->FillEllipse(D2D1::Ellipse(D2D1::Point2F(22, titleY + 12), 4, 4), accentBrush);
+    const std::wstring line = resultLabel.empty() ? ui(L"Sending", L"正在发送") : resultLabel;
+    renderTarget->DrawText(line.c_str(), static_cast<UINT32>(line.size()), titleFormat,
+        D2D1::RectF(36, titleY, width - 18, resultLabel.empty() || !resultDetail.empty() ? 36.0f : 74.0f), foregroundBrush,
+        D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    const auto& detail = resultLabel.empty() ? displayName : resultDetail;
+    if (!detail.empty()) {
+        renderTarget->DrawText(detail.c_str(), static_cast<UINT32>(detail.size()), bodyFormat,
+            D2D1::RectF(horizontalMargin, 35, width - 18, 75), mutedBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    const auto barWidth = std::max(0.0f, width - horizontalMargin * 2);
+    const double ratio = totalKnown && totalBytes > 0
+        ? std::min(1.0, static_cast<double>(completedBytes) / static_cast<double>(totalBytes)) : 0.0;
     renderTarget->FillRoundedRectangle(D2D1::RoundedRect(
         D2D1::RectF(horizontalMargin, barY, width - horizontalMargin, barY + 4), 2, 2), trackBrush);
-    const auto barWidth = std::max(0.0f, width - horizontalMargin * 2);
-    if (totalKnown && totalBytes > 0) {
-        const auto ratio = std::min(1.0, static_cast<double>(completedBytes) / static_cast<double>(totalBytes));
+    if (ratio > 0) {
         renderTarget->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(horizontalMargin, barY, horizontalMargin + static_cast<float>(barWidth * ratio), barY + 4), 2, 2), accentBrush);
-    } else {
-        renderTarget->FillRoundedRectangle(D2D1::RoundedRect(
-            D2D1::RectF(horizontalMargin, barY, horizontalMargin + barWidth * 0.22f, barY + 4), 2, 2), accentBrush);
+            D2D1::RectF(horizontalMargin, barY, horizontalMargin + static_cast<float>(barWidth * ratio),
+                barY + 4), 2, 2), accentBrush);
     }
-    if (!byteLabel.empty()) {
-        renderTarget->DrawText(byteLabel.c_str(), static_cast<UINT32>(byteLabel.size()), smallFormat,
-            D2D1::RectF(horizontalMargin, 88, width - 18, height - 6), mutedBrush,
-            D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
+    const std::wstring progress = byteLabel.empty() ? L"0%" : byteLabel;
+    renderTarget->DrawText(progress.c_str(), static_cast<UINT32>(progress.size()), smallFormat,
+        D2D1::RectF(horizontalMargin, 88, width - 18, height - 6), mutedBrush,
+        D2D1_DRAW_TEXT_OPTIONS_CLIP);
     if (renderTarget->EndDraw() == D2DERR_RECREATE_TARGET) releaseRenderTarget();
 }
 
@@ -231,17 +235,18 @@ bool initializeProgressWindow(HINSTANCE instance) {
         FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown**>(&writeFactory)))) return false;
     if (FAILED(writeFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f, L"en-us", &titleFormat)) ||
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f, ui(L"en-us", L"zh-cn"), &titleFormat)) ||
         FAILED(writeFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f, L"en-us", &bodyFormat)) ||
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 15.0f, ui(L"en-us", L"zh-cn"), &bodyFormat)) ||
         FAILED(writeFactory->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, L"en-us", &smallFormat))) return false;
-    titleFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    bodyFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 11.0f, ui(L"en-us", L"zh-cn"), &smallFormat))) return false;
+    titleFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    bodyFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     smallFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     IDWriteInlineObject* ellipsis = nullptr;
-    if (SUCCEEDED(writeFactory->CreateEllipsisTrimmingSign(smallFormat, &ellipsis))) {
+    if (SUCCEEDED(writeFactory->CreateEllipsisTrimmingSign(titleFormat, &ellipsis))) {
         const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        titleFormat->SetTrimming(&trimming, ellipsis);
         bodyFormat->SetTrimming(&trimming, ellipsis);
         smallFormat->SetTrimming(&trimming, ellipsis);
         ellipsis->Release();
@@ -261,16 +266,13 @@ bool initializeProgressWindow(HINSTANCE instance) {
     return createRenderTarget(statusWindow);
 }
 
-bool showStatus(const std::wstring& text) {
+bool showStatus() {
     if (!statusWindow) return false;
     MONITORINFO monitor{};
     monitor.cbSize = sizeof(monitor);
     if (!GetMonitorInfoW(statusMonitor, &monitor)) return false;
     const RECT area = monitor.rcWork;
-    statusBody = text;
-    const auto newline = statusBody.find(L"\r\n");
-    if (newline != std::wstring::npos) statusBody = statusBody.substr(newline + 2);
-    constexpr float widthDip = 344;
+    constexpr float widthDip = 380;
     constexpr float heightDip = 116;
     const LONG margin = MulDiv(16, currentDpi, 96);
     const LONG width = std::min<LONG>(MulDiv(static_cast<int>(widthDip), currentDpi, 96),
@@ -285,29 +287,19 @@ bool showStatus(const std::wstring& text) {
 }
 
 void refreshProgress() {
-    if (deadlineExpired) phaseLabel = L"上传仍在继续；自动输入时限已过";
-    if (statusWindow && IsWindowVisible(statusWindow)) {
-        showStatus(L"ClipBridge\r\n" + phaseLabel);
-    } else if (!closing && !progressDelayPending) {
-        SetTimer(window, progressDelay, 300, nullptr);
-        progressDelayPending = true;
-    }
+    if (!closing) showStatus();
 }
 
 void hideStatus() {
     if (statusWindow) ShowWindow(statusWindow, SW_HIDE);
 }
 
-void showResult(const std::wstring& text, UINT duration = 5000) {
-    KillTimer(window, progressDelay);
-    progressDelayPending = false;
-    phaseLabel = text;
-    byteLabel.clear();
-    totalKnown = false;
-    if (!showStatus(L"ClipBridge\r\n" + text))
-        notify(text.c_str());
+void showResult(const std::wstring& text, const std::wstring& detail = {}, UINT duration = 5000) {
+    resultLabel = text;
+    resultDetail = detail;
+    if (!showStatus())
+        notify((detail.empty() ? text : text + L" " + detail).c_str());
     else {
-        statusWasShown = true;
         SetTimer(window, statusExpiry, duration, nullptr);
     }
 }
@@ -389,19 +381,14 @@ bool publishProgress(HWND target, std::uint64_t requestId, const std::string& li
     event.requestId = requestId;
     if (line == "STATUS reading-clipboard") {
         event.phase = TransferPhase::ReadingClipboard;
-        event.safeMessage = L"正在读取剪贴板";
     } else if (line == "STATUS encoding") {
         event.phase = TransferPhase::Encoding;
-        event.safeMessage = L"正在编码图片";
     } else if (line == "STATUS packing") {
         event.phase = TransferPhase::Packing;
-        event.safeMessage = L"正在准备文件";
     } else if (line == "STATUS connecting" || line == "STATUS reconnecting") {
         event.phase = TransferPhase::Connecting;
-        event.safeMessage = L"正在连接 Debian";
     } else if (line == "STATUS verifying") {
         event.phase = TransferPhase::ServerVerifying;
-        event.safeMessage = L"Debian 正在校验";
     } else if (line.rfind("NAME ", 0) == 0) {
         event.displayName = utf8ToWide(decodeBase64(line.substr(5)));
         if (event.displayName.size() > 120) event.displayName.resize(120);
@@ -419,7 +406,6 @@ bool publishProgress(HWND target, std::uint64_t requestId, const std::string& li
             return false;
         event.phase = TransferPhase::Uploading;
         event.totalKnown = true;
-        event.safeMessage = L"正在上传";
     } else {
         return false;
     }
@@ -470,7 +456,7 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
     const auto script = std::filesystem::path(module).parent_path() / L"clipbridge-agent.ps1";
     const auto executable = powershellPath();
     if (module.empty() || executable.empty() || !std::filesystem::is_regular_file(script)) {
-        error = L"ClipBridge agent script is missing.";
+        error = ui(L"ClipBridge agent script is missing.", L"找不到 ClipBridge 发送脚本。");
         return false;
     }
     SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
@@ -483,7 +469,7 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
         if (parentInput) CloseHandle(parentInput);
         if (parentOutput) CloseHandle(parentOutput);
         if (childOutput) CloseHandle(childOutput);
-        error = L"Could not create the persistent channel pipes.";
+        error = ui(L"Could not create the persistent channel pipes.", L"无法创建 SSH 连接的管道。");
         return false;
     }
     HANDLE nullDevice = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
@@ -496,7 +482,7 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
     startup.hStdOutput = childOutput;
     startup.hStdError = nullDevice;
     std::wstring command = L"\"" + executable + L"\" -NoProfile -NonInteractive -STA -File \"" +
-        script.wstring() + L"\" -SshHost " + sshHost;
+        script.wstring() + L"\" -SshHost " + sshHost + L" -UiLanguage " + (useChinese() ? L"zh" : L"en");
     PROCESS_INFORMATION child{};
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -513,7 +499,7 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
         if (parentInput) CloseHandle(parentInput);
         if (parentOutput) CloseHandle(parentOutput);
         if (job) CloseHandle(job);
-        error = L"Could not start the persistent ClipBridge agent.";
+        error = ui(L"Could not start the persistent ClipBridge agent.", L"无法启动 ClipBridge 发送进程。");
         return false;
     }
     if (!AssignProcessToJobObject(job, child.hProcess) || ResumeThread(child.hThread) == static_cast<DWORD>(-1)) {
@@ -523,7 +509,7 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
         CloseHandle(parentInput);
         CloseHandle(parentOutput);
         CloseHandle(job);
-        error = L"Could not attach the ClipBridge agent to its lifetime job.";
+        error = ui(L"Could not attach the ClipBridge agent to its lifetime job.", L"无法管理 ClipBridge 发送进程。");
         return false;
     }
     CloseHandle(child.hThread);
@@ -533,17 +519,17 @@ bool startAgent(HWND target, const std::atomic_bool& cancel, std::wstring& error
     agentOutput = parentOutput;
     std::string line;
     if (!readAgentLine(line, GetTickCount64() + 30000, cancel)) {
-        error = L"ClipBridge could not establish its dedicated SSH channel.";
+        error = ui(L"ClipBridge could not establish its dedicated SSH channel.", L"无法建立 ClipBridge 的 SSH 长连接。");
         closeAgent();
         return false;
     }
     if (line.rfind("FATAL ", 0) == 0) {
-        error = L"ClipBridge could not connect to Debian.";
+        error = ui(L"ClipBridge could not connect to Debian.", L"无法通过 SSH 连接 Linux。");
         closeAgent();
         return false;
     }
     if (line != "READY") {
-        error = L"ClipBridge returned an invalid channel status.";
+        error = ui(L"ClipBridge returned an invalid channel status.", L"SSH 连接返回了无效的状态。");
         closeAgent();
         return false;
     }
@@ -572,21 +558,24 @@ std::string decodeBase64(const std::string& text) {
 
 std::string sendUpload(HWND target, std::uint64_t requestId, const std::atomic_bool& cancel, std::wstring& error) {
     std::lock_guard<std::mutex> lock(agentMutex);
-    if (cancel.load()) { error = L"Upload cancelled."; return {}; }
+    if (cancel.load()) { error = ui(L"Send cancelled.", L"发送已取消。"); return {}; }
     if (!agentProcess && !startAgent(target, cancel, error)) return {};
     const char command[] = "UPLOAD\n";
     DWORD written = 0;
     if (!WriteFile(agentInput, command, static_cast<DWORD>(sizeof(command) - 1), &written, nullptr) ||
         written != sizeof(command) - 1) {
-        error = L"The persistent SSH channel disconnected. Press Alt+Shift+V to retry.";
+        error = ui(L"The persistent SSH channel disconnected. Press Alt+Shift+V to retry.", L"SSH 连接已断开。按 Alt+Shift+V 重试。");
         closeAgent();
         return {};
     }
     std::string result;
     const auto deadline = GetTickCount64() + 30ull * 60 * 1000;
+    bool awaitingReceipt = false;
     while (!cancel.load()) {
         std::string line;
         if (!readAgentLine(line, deadline, cancel)) break;
+        if (line == "STATUS verifying") awaitingReceipt = true;
+        else if (line == "STATUS reconnecting" || line.rfind("PROGRESS ", 0) == 0) awaitingReceipt = false;
         if (publishProgress(target, requestId, line)) continue;
         if (line.rfind("PATH ", 0) == 0) {
             result = decodeBase64(line.substr(5));
@@ -594,25 +583,29 @@ std::string sendUpload(HWND target, std::uint64_t requestId, const std::atomic_b
         }
         if (line.rfind("ERROR ", 0) == 0) {
             error = utf8ToWide(decodeBase64(line.substr(6)));
-            if (error.empty()) error = L"Upload failed. Check the ClipBridge status.";
+            if (error.empty()) error = ui(L"Send failed. Check the ClipBridge status.", L"发送失败。");
             break;
         }
         if (line.rfind("FATAL ", 0) == 0) {
-            error = L"The persistent ClipBridge agent stopped unexpectedly.";
+            error = ui(L"The persistent ClipBridge agent stopped unexpectedly.", L"ClipBridge 发送进程意外退出。");
             closeAgent();
             break;
         }
-        error = L"ClipBridge returned an invalid upload response.";
+        error = ui(L"ClipBridge returned an invalid transfer response.", L"收到无效的发送回执。");
         closeAgent();
         break;
     }
     if (cancel.load()) {
-        error = L"Upload cancelled. Server commit status may be unknown.";
+        error = ui(L"Send cancelled. Server commit status may be unknown.", L"发送已取消，无法确认远端是否已保存。");
         closeAgent();
         return {};
     }
     if (result.empty() && error.empty()) {
-        error = L"Upload timed out or the SSH channel disconnected. No path was entered.";
+        error = awaitingReceipt
+            ? ui(L"No complete receipt from Linux. The remote save status is unknown.",
+                L"未收到完整的 Linux 回执，无法确认远端是否已保存。")
+            : ui(L"Send timed out or the SSH channel disconnected. No path was entered.",
+                L"发送超时或 SSH 连接断开，未粘贴路径。");
         closeAgent();
         return {};
     }
@@ -621,12 +614,12 @@ std::string sendUpload(HWND target, std::uint64_t requestId, const std::atomic_b
         (result.size() >= 3 && result.compare(result.size() - 3, 3, "/..") == 0) ||
         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, result.data(),
             static_cast<int>(result.size()), nullptr, 0) <= 0) {
-        error = L"Debian returned an invalid path; nothing was entered.";
+        error = ui(L"Debian returned an invalid path; nothing was entered.", L"Linux 返回的路径无效，未粘贴。");
         return {};
     }
     for (const unsigned char character : result) {
         if (character < 0x20 || character == 0x7f) {
-            error = L"Debian returned an invalid path; nothing was entered.";
+            error = ui(L"Debian returned an invalid path; nothing was entered.", L"Linux 返回的路径无效，未粘贴。");
             return {};
         }
     }
@@ -644,7 +637,7 @@ std::wstring utf8ToWide(const std::string& text) {
     return result;
 }
 
-bool setClipboard(const std::string& path, DWORD sequence) {
+bool setClipboard(const std::string& path, DWORD sequence, DWORD& writtenSequence) {
     const UINT historyFormat = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
     if (!historyFormat || !OpenClipboard(window)) return false;
     if (GetClipboardSequenceNumber() != sequence) {
@@ -670,11 +663,12 @@ bool setClipboard(const std::string& path, DWORD sequence) {
     }
     if (!success && memory) GlobalFree(memory);
     if (historyFlag) GlobalFree(historyFlag);
+    if (success) writtenSequence = GetClipboardSequenceNumber();
     CloseClipboard();
     return success;
 }
 
-bool paste(const Upload& upload) {
+bool paste(const Upload& upload, DWORD writtenSequence) {
     if (terminal.empty() || !eventHook || upload.focusGeneration != focusGeneration ||
         upload.target != GetForegroundWindow() || GetTickCount64() - upload.started >= pasteTimeoutMs)
         return false;
@@ -691,9 +685,8 @@ bool paste(const Upload& upload) {
         input[i].ki.wVk = keys[i];
         if (i >= 3) input[i].ki.dwFlags = KEYEVENTF_KEYUP;
     }
-    if (upload.target != GetForegroundWindow()) return false;
-    if (!setClipboard(upload.path, upload.clipboardSequence)) return false;
-    if (upload.target != GetForegroundWindow()) return false;
+    if (upload.target != GetForegroundWindow() ||
+        GetClipboardSequenceNumber() != writtenSequence) return false;
     return SendInput(ARRAYSIZE(input), input, sizeof(INPUT)) == ARRAYSIZE(input);
 }
 
@@ -703,7 +696,7 @@ void CALLBACK foregroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, D
 
 LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_HOTKEY && wParam == hotkeyId && !closing) {
-        if (active) { notify(L"Upload already in progress."); return 0; }
+        if (active) { notify(ui(L"A transfer is already in progress.", L"已有发送正在进行。")); return 0; }
         auto upload = std::make_unique<Upload>();
         upload->target = GetForegroundWindow();
         GetWindowThreadProcessId(upload->target, &upload->pid);
@@ -717,32 +710,29 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         statusMonitor = MonitorFromWindow(upload->target, MONITOR_DEFAULTTOPRIMARY);
         currentDpi = GetDpiForWindow(upload->target);
         deadlineExpired = false;
-        statusWasShown = false;
-        progressDelayPending = false;
-        phaseLabel = L"读取剪贴板";
+        resultLabel.clear();
+        resultDetail.clear();
         displayName.clear();
         byteLabel.clear();
         completedBytes = 0;
         totalBytes = 0;
         totalKnown = false;
         KillTimer(hwnd, statusExpiry);
-        KillTimer(hwnd, progressDelay);
-        SetTimer(hwnd, progressDelay, 300, nullptr);
-        progressDelayPending = true;
         if (upload->pasteCandidate) SetTimer(hwnd, pasteDeadline, static_cast<UINT>(pasteTimeoutMs), nullptr);
         active = std::make_shared<std::atomic_bool>(false);
         upload->cancel = active;
+        refreshProgress();
         try {
             std::thread([task = std::move(upload), hwnd]() mutable {
                 try { task->path = sendUpload(hwnd, task->requestId, *task->cancel, task->error); }
-                catch (...) { task->error = L"Upload failed unexpectedly. No path was entered."; }
+                catch (...) { task->error = ui(L"Send failed unexpectedly. No path was entered.", L"发送意外失败，未粘贴路径。"); }
                 Upload* result = task.release();
                 if (!PostMessageW(hwnd, finished, 0, reinterpret_cast<LPARAM>(result))) delete result;
             }).detach();
         } catch (...) {
             active.reset();
             KillTimer(hwnd, pasteDeadline);
-            showResult(L"Could not start the upload.");
+            showResult(ui(L"Could not start sending.", L"无法开始发送。"));
         }
         return 0;
     }
@@ -750,20 +740,20 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         std::unique_ptr<TransferEvent> event(reinterpret_cast<TransferEvent*>(lParam));
         if (event && active && !closing && event->requestId == activeRequestId) {
             if (!event->displayName.empty()) displayName = event->displayName;
-            if (!event->safeMessage.empty()) phaseLabel = event->safeMessage;
             if (event->totalKnown) {
                 completedBytes = event->completedBytes;
                 totalBytes = event->totalBytes;
                 totalKnown = true;
                 wchar_t label[96]{};
-                const auto unit = totalBytes >= 1024ull * 1024 ? 1024.0 * 1024 : 1024.0;
+                const double unit = totalBytes >= 1024ull * 1024 ? 1024.0 * 1024 :
+                    totalBytes >= 1024 ? 1024.0 : 1.0;
                 const auto suffix = totalBytes >= 1024ull * 1024 ? L"MiB" :
                     totalBytes >= 1024 ? L"KiB" : L"B";
-                std::swprintf(label, ARRAYSIZE(label), L"已发送 %.1f / %.1f %ls  (%llu%%)",
+                std::swprintf(label, ARRAYSIZE(label), L"%.1f / %.1f %ls  (%llu%%)",
                     completedBytes / unit, totalBytes / unit, suffix,
                     completedBytes * 100 / totalBytes);
                 byteLabel = label;
-            } else if (event->phase == TransferPhase::ServerVerifying) {
+            } else if (event->phase != TransferPhase::Preparing && event->phase != TransferPhase::ServerVerifying) {
                 totalKnown = false;
                 byteLabel.clear();
             }
@@ -784,48 +774,39 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     }
-    if (message == WM_TIMER && wParam == progressDelay) {
-        KillTimer(hwnd, progressDelay);
-        progressDelayPending = false;
-        if (active && !closing) {
-            showStatus(L"ClipBridge\r\n" + phaseLabel);
-            statusWasShown = true;
-        }
-        return 0;
-    }
     if (message == WM_TIMER && wParam == statusExpiry) {
         KillTimer(hwnd, statusExpiry);
         hideStatus();
-        statusWasShown = false;
         return 0;
     }
     if (message == finished) {
         std::unique_ptr<Upload> upload(reinterpret_cast<Upload*>(lParam));
         active.reset();
         KillTimer(hwnd, pasteDeadline);
-        KillTimer(hwnd, progressDelay);
-        progressDelayPending = false;
         if (closing) {
             { std::lock_guard<std::mutex> lock(agentMutex); closeAgent(); }
             DestroyWindow(hwnd);
             return 0;
         }
         if (upload->cancel->load())
-            showResult(L"Upload cancelled. Server commit status may be unknown.");
+            showResult(ui(L"Send cancelled. Server commit status may be unknown.", L"发送已取消，无法确认远端是否已保存。"));
         else if (!upload->error.empty())
-            showResult(upload->error);
+            showResult(ui(L"Send failed", L"发送失败"), upload->error);
         else if (upload->path.empty())
-            showResult(L"Upload failed. No path was entered.");
-        else if (paste(*upload)) {
-            if (statusWasShown)
-                showResult(L"已发送路径粘贴", 1000);
-            else
+            showResult(ui(L"Send failed", L"发送失败"),
+                ui(L"Linux did not return a usable path.", L"Linux 未返回可用路径。"));
+        else {
+            DWORD writtenSequence = 0;
+            const bool copied = setClipboard(upload->path, upload->clipboardSequence, writtenSequence);
+            if (copied && paste(*upload, writtenSequence)) {
                 hideStatus();
+            } else if (copied && GetClipboardSequenceNumber() == writtenSequence) {
+                showResult(ui(L"Sent successfully. Press Ctrl+V to paste.", L"发送成功。按 Ctrl+V 粘贴。"));
+            } else {
+                showResult(ui(L"Sent successfully. Path not in clipboard. Run clipbridge latest to retrieve it.",
+                    L"发送成功，路径未写入剪贴板。运行 clipbridge latest 查看路径。"));
+            }
         }
-        else if (upload->pasteCandidate && GetTickCount64() - upload->started >= pasteTimeoutMs)
-            showResult(L"Upload complete. Auto-input expired. Run clipbridge latest to retrieve the path.");
-        else
-            showResult(L"Upload complete. Path not entered. Run clipbridge latest to retrieve it.");
         return 0;
     }
     if (message == cancelUpload) {
@@ -918,14 +899,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         nullptr, nullptr, instance, nullptr);
     if (!window) return 1;
     if (!initializeProgressWindow(instance))
-        notify(L"Native progress card is unavailable; uploads can continue without it.");
+        notify(ui(L"Native progress card is unavailable; sending can continue without it.", L"进度卡片无法显示，发送仍可继续。"));
     if (FAILED(registerNotificationShortcut())) {
-        MessageBoxW(window, L"Could not register Windows notifications for ClipBridge.", title, MB_OK | MB_ICONERROR);
+        MessageBoxW(window, ui(L"Could not register Windows notifications for ClipBridge.", L"无法注册 ClipBridge 的 Windows 通知。"), title, MB_OK | MB_ICONERROR);
         DestroyWindow(window);
         return 1;
     }
     if (!RegisterHotKey(window, hotkeyId, MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'V')) {
-        const auto error = L"Could not register Alt+Shift+V. Win32 error: " + std::to_wstring(GetLastError());
+        const auto error = std::wstring(ui(L"Could not register Alt+Shift+V. Win32 error: ", L"无法注册 Alt+Shift+V。Win32 错误：")) + std::to_wstring(GetLastError());
         notify(error.c_str());
         DestroyWindow(window);
         return 1;
@@ -946,7 +927,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             (void)hwnd;
         }).detach();
     } catch (...) {
-        notify(L"ClipBridge could not start its background SSH connection. The first hotkey will retry.");
+        notify(ui(L"ClipBridge could not start its background SSH connection. The first hotkey will retry.", L"无法在后台建立 SSH 连接。按热键时将重试。"));
     }
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

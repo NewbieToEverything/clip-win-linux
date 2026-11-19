@@ -1,5 +1,6 @@
-param(
-    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'linux'
+﻿param(
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'linux',
+    [ValidateSet('en', 'zh')][string]$UiLanguage = 'en'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -10,7 +11,41 @@ $script:payloads = [System.Collections.Generic.List[byte[]]]::new()
 $script:totalBytes = 0L
 $script:ssh = $null
 $script:sshError = $null
-$script:displayName = ''
+
+function Get-DisplayError([string]$message) {
+    $zh = $UiLanguage -eq 'zh'
+    switch -Exact ($message) {
+        'SHA256_MISMATCH' { if ($zh) { return 'Linux 校验失败，文件内容不匹配。' }; return 'Linux checksum verification failed.' }
+        'QUOTA_EXCEEDED' { if ($zh) { return 'Linux 接收目录的配额已满。' }; return 'The Linux upload quota was exceeded.' }
+        'LOW_DISK_SPACE' { if ($zh) { return 'Linux 磁盘可用空间不足。' }; return 'Linux does not have enough free disk space.' }
+        'BATCH_LIMIT_EXCEEDED' { if ($zh) { return 'Linux 拒绝了超过大小限制的内容。' }; return 'Linux rejected the transfer because it exceeds the size limit.' }
+        'EXPIRED' { if ($zh) { return '原发送请求已过期，请重新发送。' }; return 'The previous transfer request expired. Send it again.' }
+        'REQUEST_ID_CONFLICT' { if ($zh) { return '发送请求 ID 冲突。' }; return 'The transfer request ID conflicts with an earlier request.' }
+    }
+    if (!$zh) { return $message }
+    switch -Exact ($message) {
+        'Clipboard contains no image or file list.' { return '剪贴板里没有图片或文件。' }
+        'Clipboard contains no uploadable items.' { return '剪贴板里没有可发送的项目。' }
+        'Selection exceeds 200 files or directory entries.' { return '所选文件和目录总数超过 200 项。' }
+        'A file exceeds the 128 MiB limit.' { return '单个文件超过 128 MiB。' }
+        'The selection exceeds the 256 MiB limit.' { return '本次发送总大小超过 256 MiB。' }
+        'Links and junctions are not supported.' { return '无法发送符号链接或目录联接。' }
+        'Drive roots are unsupported.' { return '无法发送整个盘符的根目录。' }
+        'Folder nesting exceeds 32 levels.' { return '文件夹嵌套超过 32 层。' }
+        'Image exceeds 25 megapixels.' { return '图片超过 2500 万像素。' }
+        'PNG exceeds 15 MiB.' { return 'PNG 图片超过 15 MiB。' }
+        'A file became shorter while it was being read.' { return '文件在读取时发生了变化。' }
+        'No complete receipt from Linux. The remote save status is unknown.' { return '未收到完整的 Linux 回执，无法确认远端是否已保存。' }
+        'The Linux receipt could not be read.' { return '无法解析 Linux 回执。' }
+        'The SSH connection broke while sending.' { return '发送时 SSH 连接中断。' }
+        'Server receipt does not match the transfer.' { return 'Linux 回执与本次发送不匹配。' }
+        'Debian returned an invalid path.' { return 'Linux 回执中的路径无效。' }
+        'Debian receipt does not preserve the submitted source names and hashes.' { return 'Linux 回执中的文件名或校验值不匹配。' }
+        'Debian rejected the transfer.' { return 'Linux 拒绝接收。' }
+        'OSError' { return 'Linux 文件读写失败。' }
+        default { return $message }
+    }
+}
 
 function Write-AgentLine([string]$value) {
     [Console]::Out.WriteLine($value)
@@ -127,6 +162,12 @@ function Add-DirectoryEntry([string]$path, [string]$relative, [int]$rootIndex, [
     }
 }
 
+function Write-DisplayName([string]$name) {
+    $safeDisplayName = [regex]::Replace($name, '[\x00-\x1F\x7F\u202A-\u202E\u2066-\u2069]', '')
+    if ($safeDisplayName.Length -gt 120) { $safeDisplayName = $safeDisplayName.Substring(0, 117) + '…' }
+    Write-AgentLine ('NAME ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($safeDisplayName)))
+}
+
 function Build-Request {
     $script:entries.Clear()
     $script:payloads.Clear()
@@ -145,6 +186,8 @@ function Build-Request {
     }
     if ($null -eq $clipboard) { throw 'Clipboard contains no image or file list.' }
     if ($clipboard -is [Drawing.Image]) {
+        $requestName = 'screenshot-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.png'
+        Write-DisplayName $requestName
         Write-Status 'encoding'
         if ([long]$clipboard.Width * $clipboard.Height -gt 25000000) { throw 'Image exceeds 25 megapixels.' }
         $memory = [IO.MemoryStream]::new()
@@ -154,7 +197,6 @@ function Build-Request {
         $sha = [Security.Cryptography.SHA256]::Create()
         try { $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant() }
         finally { $sha.Dispose() }
-        $requestName = 'screenshot-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.png'
         $script:entries.Add([pscustomobject]@{
             source_name = $requestName; source_relpath = $requestName; source_root_index = 1;
             entry_type = 'file'; size = $bytes.LongLength; sha256 = $hash;
@@ -162,8 +204,13 @@ function Build-Request {
         })
         $script:payloads.Add($bytes)
         $script:totalBytes = $bytes.LongLength
-        $script:displayName = $requestName
         return 'image'
+    }
+    if (@($clipboard).Count -eq 1) {
+        Write-DisplayName ([IO.Path]::GetFileName($clipboard[0].TrimEnd('\')))
+    } else {
+        $format = if ($UiLanguage -eq 'zh') { '{0} 个项目' } else { '{0} items' }
+        Write-DisplayName ($format -f @($clipboard).Count)
     }
     Write-Status 'packing'
     $rootIndex = 0
@@ -180,11 +227,6 @@ function Build-Request {
             Add-FileEntry $selected $name $rootIndex 'files' 'explorer'
         }
     }
-    $script:displayName = if ($script:entries.Count -eq 1) {
-        [string]$script:entries[0].source_name
-    } else {
-        '{0} 个项目' -f @($clipboard).Count
-    }
     return 'files'
 }
 
@@ -192,9 +234,6 @@ function Send-Request {
     Write-Status 'reading-clipboard'
     $kind = Build-Request
     if ($script:entries.Count -eq 0) { throw 'Clipboard contains no uploadable items.' }
-    $safeDisplayName = [regex]::Replace($script:displayName, '[\x00-\x1F\x7F\u202A-\u202E\u2066-\u2069]', '')
-    if ($safeDisplayName.Length -gt 120) { $safeDisplayName = $safeDisplayName.Substring(0, 117) + '…' }
-    Write-AgentLine ('NAME ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($safeDisplayName)))
     Write-Status 'connecting'
     if ($null -eq $script:ssh -or $script:ssh.HasExited) {
         $channelWorkspace = Start-SshChannel
@@ -215,6 +254,7 @@ function Send-Request {
             $channelWorkspace = Start-SshChannel
             if ($channelWorkspace -cne $script:workspace) { throw 'SSH receiver workspace mismatch.' }
         }
+        $awaitingReceipt = $false
         try {
             $stream = $script:ssh.StandardInput.BaseStream
             $stream.Write([Text.Encoding]::ASCII.GetBytes('CBR5'), 0, 4)
@@ -225,12 +265,13 @@ function Send-Request {
             $sent = 0L
             $clock = [Diagnostics.Stopwatch]::StartNew()
             $lastReported = 0L
+            if ($script:totalBytes -gt 0) { Write-AgentLine ("PROGRESS 0 {0}" -f $script:totalBytes) }
             foreach ($bytes in $script:payloads) {
                 for ($offset = 0; $offset -lt $bytes.Length; $offset += 65536) {
                     $count = [Math]::Min(65536, $bytes.Length - $offset)
                     $stream.Write($bytes, $offset, $count)
                     $sent += $count
-                    if ($clock.ElapsedMilliseconds - $lastReported -ge 250 -or $sent -eq $script:totalBytes) {
+                    if ($clock.ElapsedMilliseconds - $lastReported -ge 100 -or $sent -eq $script:totalBytes) {
                         Write-AgentLine ("PROGRESS {0} {1}" -f $sent, $script:totalBytes)
                         $lastReported = $clock.ElapsedMilliseconds
                     }
@@ -238,11 +279,19 @@ function Send-Request {
             }
             $stream.Flush()
             Write-Status 'verifying'
+            $awaitingReceipt = $true
             $receipt = Read-Frame $script:ssh.StandardOutput.BaseStream
             break
         } catch {
             Stop-SshChannel
-            if ($attempt -eq 1) { throw 'SSH channel failed twice. Server may have committed the request; retry safely.' }
+            if ($attempt -eq 1) {
+                if (!$awaitingReceipt) { throw 'The SSH connection broke while sending.' }
+                if ($_.Exception.Message -eq 'Invalid server frame length.' -or
+                    $_.FullyQualifiedErrorId -like '*ConvertFromJson*') {
+                    throw 'The Linux receipt could not be read.'
+                }
+                throw 'No complete receipt from Linux. The remote save status is unknown.'
+            }
             Write-Status 'reconnecting'
         }
     }
@@ -302,14 +351,14 @@ try {
             Write-AgentLine ('PATH ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($path)))
         } catch {
             Stop-SshChannel
-            $message = [string]$_.Exception.Message
+            $message = Get-DisplayError ([string]$_.Exception.Message)
             Write-AgentLine ('ERROR ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message)))
         }
     }
     Stop-SshChannel
 } catch {
     Stop-SshChannel
-    $message = [string]$_.Exception.Message
+    $message = Get-DisplayError ([string]$_.Exception.Message)
     Write-AgentLine ('FATAL ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message)))
     exit 1
 }
