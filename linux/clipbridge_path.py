@@ -7,16 +7,13 @@ import json
 import os
 import re
 import shutil
-import signal
 import stat
 import struct
 import sys
 import tempfile
 import time
 import unicodedata
-import uuid
-import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 WORKSPACES = ('workspace-a', 'workspace-b')
 MIB = 1024 * 1024
@@ -26,7 +23,8 @@ MAGIC = b'CBR5'
 
 def load_config():
     defaults = {
-        'png_limit_mib': 15, 'file_limit_mib': 128, 'batch_limit_mib': 256,
+        'png_limit_mib': 15,  # Accepted for existing configs. The Windows sender limits clipboard PNGs.
+        'file_limit_mib': 128, 'batch_limit_mib': 256,
         'workspace_limit_mib': 512, 'global_limit_mib': 1024, 'entry_limit': 200,
         'path_depth_limit': 32, 'ttl_hours': 24, 'recent_protection_minutes': 60,
         'staging_idle_minutes': 60, 'low_disk_free_gib': 2,
@@ -53,7 +51,6 @@ def load_config():
 
 
 _CONFIG = load_config()
-PNG_LIMIT = _CONFIG['png_limit_mib'] * MIB
 FILE_LIMIT = _CONFIG['file_limit_mib'] * MIB
 BATCH_LIMIT = _CONFIG['batch_limit_mib'] * MIB
 WORKSPACE_LIMIT = _CONFIG['workspace_limit_mib'] * MIB
@@ -107,22 +104,10 @@ def safe_parts(name):
     return parts
 
 
-def checksum_file(path):
-    digest = hashlib.sha256()
-    with path.open('rb') as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def cache_roots():
     share = Path.home() / '.local/share/clipbridge'
     state = Path.home() / '.local/state/clipbridge'
     return share, state
-
-
-def legacy_cache_root():
-    return Path.home() / '.cache/clipbridge'
 
 
 def cache_lock(state):
@@ -156,57 +141,7 @@ def safe_tree_size(root):
 
 
 def managed_tree_size(share, workspace=None):
-    total = safe_tree_size(share)
-    legacy = legacy_cache_root()
-    if workspace is None:
-        total += safe_tree_size(legacy)
-    else:
-        total += safe_tree_size(legacy / workspace)
-    return total
-
-
-def legacy_images():
-    legacy = legacy_cache_root()
-    if legacy.is_symlink() or not legacy.is_dir():
-        return []
-    result = []
-    for workspace in WORKSPACES:
-        if (legacy / workspace).is_symlink():
-            raise ValueError('Symlink found in a legacy ClipBridge workspace')
-        image_dir = legacy / workspace / 'images'
-        if image_dir.is_symlink() or not image_dir.is_dir():
-            continue
-        for path in image_dir.glob('*.png'):
-            try:
-                st = path.lstat()
-                if stat.S_ISREG(st.st_mode):
-                    result.append((workspace, path, st.st_mtime, st.st_size))
-            except FileNotFoundError:
-                continue
-    return result
-
-
-def remove_legacy_image(workspace, path):
-    if (legacy_cache_root() / workspace).is_symlink():
-        raise ValueError('Refusing to remove from a symlinked legacy workspace')
-    expected = (legacy_cache_root() / workspace / 'images').resolve()
-    if path.is_symlink() or path.parent.resolve() != expected:
-        raise ValueError('Refusing to remove an unmanaged legacy cache path')
-    path.unlink()
-    latest = legacy_cache_root() / workspace / 'latest.json'
-    try:
-        receipt = json.loads(latest.read_text(encoding='utf-8'))
-        if receipt.get('path') == str(path):
-            remaining = sorted((item for ws, item, _, _ in legacy_images() if ws == workspace),
-                               key=lambda item: item.stat().st_mtime, reverse=True)
-            if remaining:
-                temporary = latest.with_name('.latest-prune.tmp')
-                temporary.write_text(json.dumps({'path': str(remaining[0])}) + '\n', encoding='utf-8')
-                os.replace(temporary, latest)
-            else:
-                latest.unlink()
-    except (OSError, ValueError, TypeError):
-        pass
+    return safe_tree_size(share if workspace is None else share / workspace)
 
 
 def batches(share):
@@ -310,78 +245,44 @@ def prune_locked(share, state, dry_run=False, now=None, projected_workspace=None
                             shutil.rmtree(item)
                 except FileNotFoundError:
                     continue
-        legacy_staging = legacy_cache_root() / workspace / 'staging'
-        if not (legacy_cache_root() / workspace).is_symlink() and legacy_staging.is_dir() and not legacy_staging.is_symlink():
-            for item in legacy_staging.iterdir():
-                try:
-                    if item.is_dir() and not item.is_symlink() and item.stat().st_mtime < staging_cutoff:
-                        removed.append({'workspace': workspace, 'batch_id': item.name, 'reason': 'stale-legacy-staging'})
-                        if not dry_run:
-                            shutil.rmtree(item)
-                except FileNotFoundError:
-                    continue
     entries = list(batches(share))
-    old_images = legacy_images()
     for workspace, batch, created, size in entries:
         if now - created >= TTL:
             removed.append({'workspace': workspace, 'batch_id': batch.name, 'reason': 'ttl'})
             if not dry_run:
                 remove_batch(share, state, workspace, batch)
-    for workspace, path, created, size in old_images:
-        if now - created >= TTL:
-            removed.append({'workspace': workspace, 'batch_id': path.name, 'reason': 'legacy-ttl'})
-            if not dry_run:
-                remove_legacy_image(workspace, path)
     if not dry_run:
         entries = list(batches(share))
-        old_images = legacy_images()
     else:
         entries = [entry for entry in entries if now - entry[2] < TTL]
-        old_images = [entry for entry in old_images if now - entry[2] < TTL]
 
     total = managed_tree_size(share)
-    by_workspace = {ws: sum(size for candidate, _, _, size in entries if candidate == ws) +
-                    safe_tree_size(legacy_cache_root() / ws)
+    by_workspace = {ws: sum(size for candidate, _, _, size in entries if candidate == ws)
                     for ws in WORKSPACES}
     for workspace in WORKSPACES:
         used = by_workspace[workspace]
         projected = projected_workspace if projected_workspace is not None and workspace == os.environ.get('CLIPBRIDGE_WS') else 0
         if used + projected >= WORKSPACE_LIMIT * PRESSURE_TRIGGER:
             target = int(WORKSPACE_LIMIT * PRESSURE_TARGET)
-            candidates = ([(candidate, batch, created, size, 'batch')
-                          for candidate, batch, created, size in entries] +
-                         [(candidate, path, created, size, 'legacy')
-                          for candidate, path, created, size in old_images])
-            for candidate, item, created, size, item_type in sorted(candidates, key=lambda row: row[2]):
+            for candidate, item, created, size in sorted(entries, key=lambda row: row[2]):
                 if candidate != workspace or now - created < RECENT or used + projected <= target:
                     continue
                 removed.append({'workspace': workspace, 'batch_id': item.name, 'reason': 'workspace-pressure'})
                 used -= size
                 if not dry_run:
-                    if item_type == 'batch':
-                        remove_batch(share, state, workspace, item)
-                    else:
-                        remove_legacy_image(workspace, item)
+                    remove_batch(share, state, workspace, item)
     if not dry_run:
         entries = list(batches(share))
-        old_images = legacy_images()
         total = managed_tree_size(share)
     if total + projected_global >= GLOBAL_LIMIT * PRESSURE_TRIGGER:
         target = int(GLOBAL_LIMIT * PRESSURE_TARGET)
-        candidates = ([(workspace, batch, created, size, 'batch')
-                      for workspace, batch, created, size in entries] +
-                     [(workspace, path, created, size, 'legacy')
-                      for workspace, path, created, size in old_images])
-        for workspace, item, created, size, item_type in sorted(candidates, key=lambda row: row[2]):
+        for workspace, item, created, size in sorted(entries, key=lambda row: row[2]):
             if now - created < RECENT or total + projected_global <= target:
                 continue
             removed.append({'workspace': workspace, 'batch_id': item.name, 'reason': 'global-pressure'})
             total -= size
             if not dry_run:
-                if item_type == 'batch':
-                    remove_batch(share, state, workspace, item)
-                else:
-                    remove_legacy_image(workspace, item)
+                remove_batch(share, state, workspace, item)
     return removed
 
 
@@ -438,7 +339,7 @@ def assert_same_request(receipt, entries):
         raise ValueError('REQUEST_ID_CONFLICT')
 
 
-def receive_entries(share, state, workspace, request_id, entries, source_stream, origin='explorer', archive_sha256=None, held_lock=None):
+def receive_entries(share, state, workspace, request_id, entries, source_stream):
     if not re.fullmatch(r'[a-f0-9]{32}', request_id or ''):
         raise ValueError('Invalid request_id')
     existing = committed_receipt(share, workspace, request_id)
@@ -471,8 +372,7 @@ def receive_entries(share, state, workspace, request_id, entries, source_stream,
             if size != 0:
                 raise ValueError('Directory entries cannot contain payload bytes')
         elif (not isinstance(size, int) or size < 0 or size > FILE_LIMIT or
-              (digest is None and entry.get('origin') != 'archive_compat') or
-              (digest is not None and (not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest)))):
+              not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest)):
             raise ValueError('Invalid file size or sha256')
         total += size
         checked.append((entry, parts, size, digest, index))
@@ -481,7 +381,7 @@ def receive_entries(share, state, workspace, request_id, entries, source_stream,
     if existing:
         assert_same_request(existing, entries)
         return existing
-    lock = held_lock or cache_lock(state)
+    lock = cache_lock(state)
     try:
         share.mkdir(parents=True, exist_ok=True)
         existing = committed_receipt(share, workspace, request_id)
@@ -537,9 +437,8 @@ def receive_entries(share, state, workspace, request_id, entries, source_stream,
                         output.flush()
                         os.fsync(output.fileno())
                     actual_hash = digest.hexdigest()
-                    if expected_hash is not None and actual_hash != expected_hash:
+                    if actual_hash != expected_hash:
                         raise ValueError('SHA256_MISMATCH')
-                    expected_hash = actual_hash
                 if root_key not in root_seen:
                     root_seen.add(root_key)
                     roots.append(root_records[root_key])
@@ -547,9 +446,9 @@ def receive_entries(share, state, workspace, request_id, entries, source_stream,
                                'source_root_index': source_root_index,
                                'stored_path': str((destination_root / batch / 'payload' / relative)),
                                'entry_type': entry['entry_type'], 'size': size,
-                               'sha256': expected_hash, 'renamed': False, 'origin': entry.get('origin', origin)})
+                               'sha256': expected_hash, 'renamed': False, 'origin': entry.get('origin', 'explorer')})
             kinds = {item[0].get('kind') for item in checked}
-            kind = 'image' if kinds == {'image'} else 'archive' if 'archive' in kinds else 'files'
+            kind = 'image' if kinds == {'image'} else 'files'
             paths = [str(destination_root / batch / 'payload' / 'items' / f'{number:04d}' / name)
                      for name, number in roots]
             receipt = {'ok': True, 'version': 2, 'request_id': request_id, 'batch_id': batch,
@@ -557,8 +456,6 @@ def receive_entries(share, state, workspace, request_id, entries, source_stream,
                        'count': len(roots), 'bytes': total,
                        'sha256': [item['sha256'] for item in mapped if item['entry_type'] == 'file'],
                        'entries': mapped}
-            if archive_sha256 is not None:
-                receipt['archive_sha256'] = archive_sha256
             manifest = {'request_id': request_id, 'workspace': workspace,
                         'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         'receipt': receipt, 'items': mapped}
@@ -571,121 +468,6 @@ def receive_entries(share, state, workspace, request_id, entries, source_stream,
         temporary_latest.write_text(json.dumps(receipt, ensure_ascii=False) + '\n', encoding='utf-8')
         os.replace(temporary_latest, latest)
         return receipt
-    finally:
-        if held_lock is None:
-            lock.close()
-
-
-def receive_archive(share, state, workspace, archive_stream, progress=False):
-    # Compatibility upload: the ZIP manifest carries original UTF-8 paths. New framed
-    # clients use receive_entries directly and send per-file hashes.
-    request_id = uuid.uuid4().hex
-    lock = cache_lock(state)
-    workspace_staging = share / workspace / 'staging'
-    try:
-        share.mkdir(parents=True, exist_ok=True)
-        workspace_staging.mkdir(parents=True, exist_ok=True)
-        if workspace_staging.is_symlink():
-            raise ValueError('Unsafe staging root')
-        reserve_and_prune(share, state, workspace, 0)
-        with tempfile.TemporaryDirectory(dir=workspace_staging) as temp_name:
-            archive_path = Path(temp_name) / 'upload.zip'
-            digest = hashlib.sha256()
-            total_zip = 0
-            if progress:
-                report_received(0)
-            reader = getattr(archive_stream, 'read1', archive_stream.read)
-            with archive_path.open('wb') as target:
-                while block := reader(1024 * 1024):
-                    total_zip += len(block)
-                    if total_zip > BATCH_LIMIT:
-                        raise ValueError('BATCH_LIMIT_EXCEEDED')
-                    reserve_and_prune(share, state, workspace, len(block))
-                    target.write(block)
-                    digest.update(block)
-                    if progress:
-                        report_received(total_zip)
-            entries = []
-            with zipfile.ZipFile(archive_path) as archive:
-                infos = archive.infolist()
-                if not infos or len(infos) > ENTRY_LIMIT:
-                    raise ValueError('Invalid archive entry count')
-                names = set()
-                node_types = {}
-                sizes = 0
-                for info in infos:
-                    name = info.filename.rstrip('/')
-                    parts = safe_parts(name)
-                    root_index = None
-                    if re.fullmatch(r'[0-9]{4}', parts[0]):
-                        root_index = int(parts[0])
-                        parts = parts[1:]
-                        if not parts:
-                            raise ValueError('Missing source name after root index')
-                        name = '/'.join(parts)
-                    node_key = (root_index, name)
-                    if node_key in names:
-                        raise ValueError('Duplicate source path')
-                    names.add(node_key)
-                    mode = info.external_attr >> 16
-                    file_type = stat.S_IFMT(mode)
-                    directory = info.is_dir()
-                    if file_type not in (0, stat.S_IFDIR if directory else stat.S_IFREG):
-                        raise ValueError('Unsupported archive entry type')
-                    for length in range(1, len(parts)):
-                        if node_types.get((root_index, '/'.join(parts[:length]))) is False:
-                            raise ValueError('File path cannot contain children')
-                    if not directory and any(idx == root_index and existing.startswith(name + '/') for idx, existing in names):
-                        raise ValueError('File path cannot contain children')
-                    node_types[node_key] = directory
-                    if directory and info.file_size:
-                        raise ValueError('Directory entries cannot contain data')
-                    if not directory and info.file_size > FILE_LIMIT:
-                        raise ValueError('FILE_LIMIT_EXCEEDED')
-                    sizes += info.file_size
-                    if sizes > BATCH_LIMIT:
-                        raise ValueError('BATCH_LIMIT_EXCEEDED')
-                    entries.append((info, name, directory, root_index))
-            metadata = []
-            for info, name, directory, root_index in entries:
-                metadata.append({'source_relpath': name, 'entry_type': 'directory' if directory else 'file',
-                                 'size': 0 if directory else info.file_size,
-                                 'source_root_index': root_index, 'sha256': None,
-                                 'kind': 'archive', 'origin': 'archive_compat'})
-            class SpoolReader:
-                def __init__(self, archive, archived_entries):
-                    self.archive = archive; self.entries = archived_entries
-                    self.index = 0; self.stream = None; self.remaining = 0
-                def read(self, n=-1):
-                    while self.index < len(self.entries):
-                        info, _, directory, _ = self.entries[self.index]
-                        if self.stream is None and directory:
-                            self.index += 1
-                            continue
-                        if self.stream is None:
-                            self.stream = self.archive.open(info)
-                            self.remaining = info.file_size
-                        if self.remaining == 0:
-                            if self.stream.read(1):
-                                raise ValueError('Invalid expanded archive size')
-                            self.stream.close(); self.stream = None; self.index += 1
-                            continue
-                        amount = self.remaining if n < 0 else min(n, self.remaining)
-                        data = self.stream.read(amount)
-                        self.remaining -= len(data)
-                        if not data:
-                            raise ValueError('Truncated archive entry')
-                        return data
-                    return b''
-                def drain(self):
-                    while self.read(1024 * 1024):
-                        pass
-            with zipfile.ZipFile(archive_path) as archive:
-                reader = SpoolReader(archive, entries)
-                receipt = receive_entries(share, state, workspace, request_id, metadata, reader,
-                                          archive_sha256=digest.hexdigest(), held_lock=lock)
-                reader.drain()
-                return receipt
     finally:
         lock.close()
 
@@ -721,50 +503,7 @@ def dispatch(args):
         return json.loads(latest.read_text(encoding='utf-8'))
     if args == ['serve', '--stdio']:
         return serve(share, state, workspace)
-    progress = args[-1:] == ['--progress']
-    if progress:
-        args = args[:-1]
-    formats = {('receive', '--format', 'png'): 'png', ('receive', '--format', 'archive'): 'archive',
-               ('receive', '--format=png'): 'png', ('receive', '--format=archive'): 'archive'}
-    if tuple(args) not in formats:
-        raise ValueError('Invalid path-first command')
-    return receive_legacy(share, state, workspace, formats[tuple(args)], progress)
-
-
-def report_received(size):
-    print(f'CLIPBRIDGE_PROGRESS {size}', file=sys.stderr, flush=True)
-
-
-def receive_legacy(share, state, workspace, kind, progress=False):
-    if kind == 'png':
-        from PIL import Image
-        data = bytearray()
-        if progress:
-            report_received(0)
-        reader = getattr(sys.stdin.buffer, 'read1', sys.stdin.buffer.read)
-        while block := reader(min(64 * 1024, PNG_LIMIT + 1 - len(data))):
-            data.extend(block)
-            if progress:
-                report_received(len(data))
-            if len(data) > PNG_LIMIT:
-                break
-        data = bytes(data)
-        if len(data) > PNG_LIMIT or not data.startswith(b'\x89PNG\r\n\x1a\n'):
-            raise ValueError('Expected a PNG of at most 15 MiB')
-        with Image.open(__import__('io').BytesIO(data), formats=['PNG']) as image:
-            if image.width * image.height > 25_000_000 or getattr(image, 'n_frames', 1) != 1:
-                raise ValueError('Expected one image of at most 25 megapixels')
-            image.verify()
-        request_id = uuid.uuid4().hex
-        name = f"screenshot-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}-{request_id[:8]}.png"
-        entry = {'source_name': name, 'source_relpath': name, 'entry_type': 'file',
-                 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
-                 'kind': 'image', 'origin': 'clipboard_bitmap'}
-        import io
-        return receive_entries(share, state, workspace, request_id, [entry], io.BytesIO(data),
-                               'clipboard_bitmap', hashlib.sha256(data).hexdigest())
-    stream = sys.stdin.buffer
-    return receive_archive(share, state, workspace, stream, progress)
+    raise ValueError('Invalid ClipBridge command')
 
 
 def serve(share, state, workspace):

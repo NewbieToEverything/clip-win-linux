@@ -4,7 +4,7 @@
 
 | 用途 | 依赖 | 检查方式 |
 |---|---|---|
-| Linux 接收端 | Python 3.9 或更新版、Pillow、已运行的 OpenSSH Server | `/usr/bin/python3 -c 'import sys; from PIL import Image; assert sys.version_info >= (3, 9)'`；从 Windows 运行 README 的 SSH 检查 |
+| Linux 接收端 | Python 3.9 或更新版、已运行的 OpenSSH Server | `/usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 9)'`；从 Windows 运行 README 的 SSH 检查 |
 | Linux 安装脚本 | Bash、GNU coreutils 的 `install` | `command -v bash install` |
 | Linux 定时清理 | systemd 用户管理器；也可用系统自己的定时工具 | `systemctl --user list-timers` |
 | Windows 运行 | Windows 11、Windows PowerShell 5.1、.NET Framework 自带的 WinForms 和 System.Drawing、OpenSSH Client | `$PSVersionTable.PSVersion`、`Get-Command ssh.exe`、`Add-Type -AssemblyName System.Windows.Forms, System.Drawing` |
@@ -15,10 +15,10 @@
 Debian 可用系统包安装 Linux 依赖：
 
 ```bash
-sudo apt install python3 python3-pil openssh-server
+sudo apt install python3 openssh-server
 ```
 
-其他发行版使用各自的包管理器。Python 依赖声明在 [requirements.txt](requirements.txt)。接收器和定时服务默认使用 `/usr/bin/python3`，所以 Pillow 需要对这个解释器可见。只安装到虚拟环境时，须让 SSH 接收命令和定时清理都使用那个环境的解释器。
+其他发行版使用各自的包管理器。接收器和定时服务使用 `/usr/bin/python3`，只依赖 Python 标准库。
 
 当前 SSH 上传和 Windows 粘贴无需 xclip、Xvfb 或 tmux。
 

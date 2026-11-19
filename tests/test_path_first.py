@@ -1,19 +1,14 @@
 import hashlib
-import io
+import base64
 import json
 import os
-import select
-import stat
 import struct
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import zipfile
 from pathlib import Path
-
-from PIL import Image
 
 CLI = Path(__file__).resolve().parents[1] / 'linux/clipbridge'
 
@@ -33,42 +28,53 @@ class ReceiverTests(unittest.TestCase):
         return subprocess.run([sys.executable, CLI, *args], env=self.env(workspace),
                               input=data, capture_output=True, timeout=10)
 
-    def ingest(self, fmt, data, workspace='workspace-a', progress=False):
-        args = ['receive', f'--format={fmt}'] + (['--progress'] if progress else [])
-        return self.command(args, workspace, data)
+    def transfer(self, items, workspace='workspace-a', image=False):
+        entries = []
+        chunks = []
+        for name, data, root_index in items:
+            entries.append({'source_name': name.rsplit('/', 1)[-1], 'source_relpath': name,
+                            'source_root_index': root_index, 'kind': 'image' if image else 'files',
+                            'entry_type': 'directory' if data is None else 'file',
+                            'size': len(data or b''),
+                            'sha256': None if data is None else hashlib.sha256(data).hexdigest()})
+            chunks.append(data or b'')
+        header = {'version': 1, 'workspace': workspace, 'request_id': os.urandom(16).hex(),
+                  'kind': 'image' if image else 'files', 'file_count': len(entries), 'entries': entries}
+        raw = json.dumps(header).encode()
+        result = self.command(['serve', '--stdio'], workspace,
+                              b'CBR5' + struct.pack('>I', len(raw)) + raw + b''.join(chunks))
+        if not result.stdout:
+            self.assertNotEqual(result.returncode, 0)
+            return json.loads(result.stderr)
+        ready_size = struct.unpack_from('>I', result.stdout)[0]
+        response_size = struct.unpack_from('>I', result.stdout, 4 + ready_size)[0]
+        offset = 8 + ready_size
+        return json.loads(result.stdout[offset:offset + response_size])
 
-    def test_png_bytes_workspace_and_generated_screenshot_name(self):
-        buffer = io.BytesIO()
-        Image.new('RGB', (23, 12), 'red').save(buffer, format='PNG')
-        image = buffer.getvalue()
+    def test_png_bytes_workspace_and_name_are_preserved(self):
+        image = base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf2sAAAAASUVORK5CYII=')
         for workspace in ('workspace-a', 'workspace-b'):
-            result = self.ingest('png', image, workspace)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            receipt = json.loads(result.stdout)
+            receipt = self.transfer([('sample.png', image, 1)], workspace, image=True)
+            self.assertTrue(receipt['ok'], receipt)
             self.assertEqual(receipt['workspace'], workspace)
             path = Path(receipt['paths'][0])
             self.assertIn(workspace, path.parts)
-            self.assertTrue(path.name.startswith('screenshot-'))
+            self.assertEqual(path.name, 'sample.png')
             self.assertEqual(path.read_bytes(), image)
             self.assertEqual(receipt['sha256'], [hashlib.sha256(image).hexdigest()])
             self.assertEqual(json.loads(self.command(['latest'], workspace).stdout), receipt)
-        self.assertNotEqual(self.ingest('png', image, 'workspace-c').returncode, 0)
+        self.assertFalse(self.transfer([('sample.png', image, 1)], 'workspace-c', image=True)['ok'])
 
-    def test_archive_preserves_unicode_names_tree_and_hashes(self):
-        blob = io.BytesIO()
-        with zipfile.ZipFile(blob, 'w') as z:
-            z.writestr('相片 (最终版).PNG', b'photo')
-            z.writestr('资料夹/', b'')
-            z.writestr('资料夹/文档 2026.txt', b'document')
-            z.writestr('资料夹/空目录/', b'')
-        result = self.ingest('archive', blob.getvalue())
-        self.assertEqual(result.returncode, 0, result.stderr)
-        receipt = json.loads(result.stdout)
+    def test_transfer_preserves_unicode_names_tree_and_hashes(self):
+        receipt = self.transfer([('相片 (最终版).PNG', b'photo', 1), ('资料夹', None, 2),
+                                 ('资料夹/文档 2026.txt', b'document', 2), ('资料夹/空目录', None, 2)])
+        self.assertTrue(receipt['ok'], receipt)
         paths = [Path(path) for path in receipt['paths']]
         self.assertEqual(receipt['count'], 2)
         self.assertEqual(paths[0].name, '相片 (最终版).PNG')
         self.assertEqual(paths[0].read_bytes(), b'photo')
-        directory = next(path for path in paths if path.is_dir())
+        directory = paths[1]
         self.assertEqual(directory.name, '资料夹')
         self.assertEqual((directory / '文档 2026.txt').read_bytes(), b'document')
         self.assertTrue((directory / '空目录').is_dir())
@@ -80,15 +86,9 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(by_name['相片 (最终版).PNG']['sha256'], hashlib.sha256(b'photo').hexdigest())
 
     def test_duplicate_basenames_get_separate_parents_and_unicode_is_not_normalized(self):
-        blob = io.BytesIO()
-        with zipfile.ZipFile(blob, 'w') as z:
-            z.writestr('0001/report.pdf', b'one')
-            z.writestr('0002/report.pdf', b'two')
-            z.writestr('0003/é.txt', b'nfc')
-            z.writestr('0004/e\u0301.txt', b'nfd')
-        result = self.ingest('archive', blob.getvalue())
-        self.assertEqual(result.returncode, 0, result.stderr)
-        receipt = json.loads(result.stdout)
+        receipt = self.transfer([('report.pdf', b'one', 1), ('report.pdf', b'two', 2),
+                                 ('é.txt', b'nfc', 3), ('e\u0301.txt', b'nfd', 4)])
+        self.assertTrue(receipt['ok'], receipt)
         report_paths = [Path(e['stored_path']) for e in receipt['entries'] if e['source_name'] == 'report.pdf']
         self.assertEqual(len(report_paths), 2)
         self.assertEqual({path.name for path in report_paths}, {'report.pdf'})
@@ -96,62 +96,14 @@ class ReceiverTests(unittest.TestCase):
         nfc, nfd = [Path(e['stored_path']).name for e in receipt['entries'] if e['source_name'].endswith('.txt')]
         self.assertNotEqual(nfc, nfd)
 
-    def test_invalid_archives_do_not_replace_latest(self):
-        original = io.BytesIO()
-        with zipfile.ZipFile(original, 'w') as z:
-            z.writestr('report.txt', b'good')
-        valid = self.ingest('archive', original.getvalue())
-        self.assertEqual(valid.returncode, 0, valid.stderr)
+    def test_invalid_paths_do_not_replace_latest(self):
+        self.assertTrue(self.transfer([('report.txt', b'good', 1)])['ok'])
         latest = self.command(['latest']).stdout
-        symlink = zipfile.ZipInfo('link')
-        symlink.create_system = 3
-        symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
         for name in ('../outside', '/absolute', 'C:/drive', 'bad\\name'):
             with self.subTest(name=name):
-                blob = io.BytesIO()
-                with zipfile.ZipFile(blob, 'w') as z:
-                    z.writestr(name, b'bad')
-                result = self.ingest('archive', blob.getvalue())
-                self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(result.stdout)
+                self.assertFalse(self.transfer([(name, b'bad', 1)])['ok'])
                 self.assertEqual(self.command(['latest']).stdout, latest)
-        blob = io.BytesIO()
-        with zipfile.ZipFile(blob, 'w') as z:
-            z.writestr('a', b'file')
-            z.writestr('a/b', b'child')
-        self.assertNotEqual(self.ingest('archive', blob.getvalue()).returncode, 0)
-        self.assertEqual(self.command(['latest']).stdout, latest)
-        blob = io.BytesIO()
-        with zipfile.ZipFile(blob, 'w') as z:
-            z.writestr(symlink, b'outside')
-        self.assertNotEqual(self.ingest('archive', blob.getvalue()).returncode, 0)
-        self.assertEqual(self.command(['latest']).stdout, latest)
-        self.assertNotEqual(self.ingest('png', b'not a PNG').returncode, 0)
 
-    def test_progress_reports_received_bytes_before_eof(self):
-        buffer = io.BytesIO()
-        Image.new('RGB', (23, 12), 'green').save(buffer, format='PNG')
-        data = buffer.getvalue()
-        with subprocess.Popen(
-            [sys.executable, CLI, 'receive', '--format=png', '--progress'],
-            env=self.env('workspace-b'), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, bufsize=0,
-        ) as process:
-            try:
-                self.assertTrue(select.select([process.stderr], [], [], 4)[0])
-                self.assertEqual(process.stderr.readline(), b'CLIPBRIDGE_PROGRESS 0\n')
-                time.sleep(0.30)
-                process.stdin.write(data[:32])
-                self.assertTrue(select.select([process.stderr], [], [], 4)[0])
-                self.assertEqual(process.stderr.readline(), b'CLIPBRIDGE_PROGRESS 32\n')
-                process.stdin.write(data[32:])
-                stdout, stderr = process.communicate(timeout=5)
-            finally:
-                if process.poll() is None:
-                    process.kill()
-        self.assertEqual(process.returncode, 0, stderr)
-        self.assertEqual(stderr, f'CLIPBRIDGE_PROGRESS {len(data)}\n'.encode())
-        self.assertEqual(json.loads(stdout)['bytes'], len(data))
 
     def test_stdio_persistent_channel_handles_sequential_uploads(self):
         env = self.env('workspace-a')
@@ -236,10 +188,8 @@ class ReceiverTests(unittest.TestCase):
         retry.stderr.close()
 
     def test_prune_removes_expired_batches_and_keeps_latest_valid(self):
-        blob = io.BytesIO()
-        Image.new('RGB', (2, 2), 'blue').save(blob, format='PNG')
-        first = json.loads(self.ingest('png', blob.getvalue()).stdout)
-        second = json.loads(self.ingest('png', blob.getvalue()).stdout)
+        first = self.transfer([('first.txt', b'first', 1)])
+        second = self.transfer([('second.txt', b'second', 1)])
         first_batch = Path(first['paths'][0]).parents[3]
         second_batch = Path(second['paths'][0]).parents[3]
         old = time.time() - 25 * 3600
@@ -282,32 +232,10 @@ class ReceiverTests(unittest.TestCase):
         with (full / 'payload' / 'full.bin').open('wb') as stream:
             stream.truncate(512 * 1024 * 1024)
         (full / 'manifest.json').write_text(json.dumps({'workspace': 'workspace-a'}))
-        image = io.BytesIO()
-        Image.new('RGB', (2, 2), 'black').save(image, format='PNG')
-        rejected = self.ingest('png', image.getvalue())
-        self.assertNotEqual(rejected.returncode, 0)
-        self.assertIn('QUOTA_EXCEEDED', rejected.stderr.decode())
+        rejected = self.transfer([('new.txt', b'new', 1)])
+        self.assertFalse(rejected['ok'])
+        self.assertEqual(rejected['error'], 'QUOTA_EXCEEDED')
         self.assertTrue(recent.exists())
-
-    def test_prune_includes_legacy_v4_cache_and_updates_its_latest_pointer(self):
-        root = Path(self.home.name) / '.cache/clipbridge/workspace-a'
-        images = root / 'images'
-        images.mkdir(parents=True)
-        old = images / 'old.png'
-        latest = images / 'recent.png'
-        old.write_bytes(b'old')
-        latest.write_bytes(b'recent')
-        old_time = time.time() - 25 * 3600
-        os.utime(old, (old_time, old_time))
-        (root / 'latest.json').write_text(json.dumps({'path': str(old)}))
-        result = self.command(['prune', '--all'])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(old.exists())
-        self.assertTrue(latest.exists())
-        self.assertEqual(json.loads((root / 'latest.json').read_text())['path'], str(latest))
-        stats = json.loads(self.command(['stats', '--all']).stdout)
-        self.assertEqual(stats['workspaces']['workspace-a']['bytes'],
-                         latest.stat().st_size + (root / 'latest.json').stat().st_size)
 
 
 if __name__ == '__main__':

@@ -29,7 +29,7 @@ Deploy clip-win-linux for me using https://github.com/NewbieToEverything/clip-wi
 
 Check [Deployment dependencies](DEPENDENCIES.md) first. The default SSH alias is `linux`. You can specify a different alias. Choose a Windows installation directory, such as `%LOCALAPPDATA%\ClipBridge`, and keep the EXE and its scripts together there.
 
-1. On Linux, install Python 3.9 or later and Pillow, then run `bash linux/install.sh` from the repository. This installs the receiver and enables hourly cache cleanup.
+1. On Linux, install Python 3.9 or later, then run `bash linux/install.sh` from the repository. This installs the receiver and enables hourly cache cleanup.
 2. Configure the Linux SSH server to accept `CLIPBRIDGE_WS`. See the [deployment guide](AGENTS.md#linux-端) for how to check and reload sshd. Keep your existing SSH session open until the new connection works.
 3. In the Windows OpenSSH configuration, add `SetEnv CLIPBRIDGE_WS=workspace-a` to the `Host linux` entry. Use `workspace-b` on a second device. Verify the connection:
 
