@@ -1,7 +1,7 @@
 param(
     [ValidatePattern('^[A-Za-z0-9_.-]+\.exe$')][string]$AutoPasteTerminal,
     [ValidateRange(1,60)][int]$PasteTimeoutSeconds = 8,
-    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'debian'
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'linux'
 )
 $ErrorActionPreference = 'Stop'
 $exe = Join-Path $PSScriptRoot 'ClipBridgeHotkey.exe'

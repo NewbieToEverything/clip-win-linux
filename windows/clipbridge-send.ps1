@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'debian',
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')][string]$SshHost = 'linux',
     [switch]$ProgressEvents
 )
 $ErrorActionPreference = 'Stop'

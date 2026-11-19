@@ -80,7 +80,7 @@ std::shared_ptr<std::atomic_bool> active;
 std::atomic_bool closing{false};
 std::shared_ptr<std::atomic_bool> startupConnect;
 std::wstring terminal;
-std::wstring sshHost = L"debian";
+std::wstring sshHost = L"linux";
 ULONGLONG pasteTimeoutMs = 8000;
 HWND statusWindow;
 HMONITOR statusMonitor;

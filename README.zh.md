@@ -24,30 +24,30 @@ flowchart LR
 
 ## 快速开始
 
-先按 [部署依赖](DEPENDENCIES.md) 检查环境。下面用 `linux-upload` 举例。请换成你自己的 SSH 别名，并选择 Windows 安装目录，例如当前用户的 `%LOCALAPPDATA%\ClipBridge`。Windows 脚本和 EXE 放在同一目录。
+先按 [部署依赖](DEPENDENCIES.md) 检查环境。默认 SSH 别名是 `linux`，也可以指定其他别名。请选择 Windows 安装目录，例如当前用户的 `%LOCALAPPDATA%\ClipBridge`。Windows 脚本和 EXE 放在同一目录。
 
 1. Debian 安装 Python 3 和 Pillow 后，在仓库运行 `bash debian/install.sh`。该脚本安装接收器并启用每小时缓存清理计时器。
 2. Debian sshd 必须允许 `CLIPBRIDGE_WS` 环境变量。检查并重载 sshd 的步骤见 [Agent 部署指南](AGENTS.md#debian-端)。保持现有 SSH 会话，直到新连接验证成功。
-3. Windows OpenSSH 配置中的 `Host linux-upload` 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。验证：
+3. Windows OpenSSH 配置中的 `Host linux` 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。验证：
 
    ```powershell
-   ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes linux-upload '~/.local/bin/clipbridge doctor'
+   ssh -nT -o BatchMode=yes -o StrictHostKeyChecking=yes linux '~/.local/bin/clipbridge doctor'
    ```
 
 4. 在 Windows 构建环境运行 `windows/build-hotkey.ps1`。将生成的 `ClipBridgeHotkey.exe`、`clipbridge-agent.ps1` 和 `clipbridge-notify.ps1` 放在同一目录。
-5. 在安装目录运行 `./ClipBridgeHotkey.exe --ssh-host linux-upload`，再复制图片、文件或文件夹，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后，接收端保留文件名和目录结构，并返回各项的 Linux 绝对路径。
+5. 在安装目录运行 `./ClipBridgeHotkey.exe --ssh-host linux`，再复制图片、文件或文件夹，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后，接收端保留文件名和目录结构，并返回各项的 Linux 绝对路径。
 
 ### 开启自动粘贴（可选）
 
 在 EXE 所在目录运行以下命令。若已有实例正在运行，先执行 `.\ClipBridgeHotkey.exe --stop`，再用新参数启动。
 
 ```powershell
-.\ClipBridgeHotkey.exe --ssh-host linux-upload --auto-paste WindowsTerminal.exe
+.\ClipBridgeHotkey.exe --ssh-host linux --auto-paste WindowsTerminal.exe
 ```
 
 ### 随 XPipe 启停（可选）
 
-1. 先用 `install-user-startup.ps1 -SshHost linux-upload -AutoPasteTerminal WindowsTerminal.exe` 设置 `ClipBridge Hotkey` 计划任务的启动参数。联动脚本从这个任务读取参数。
+1. 先用 `install-user-startup.ps1 -SshHost linux -AutoPasteTerminal WindowsTerminal.exe` 设置 `ClipBridge Hotkey` 计划任务的启动参数。联动脚本从这个任务读取参数。
 2. 把 `start-with-xpipe.ps1` 和 `start-with-xpipe.vbs` 放到 EXE 同目录。把原 XPipe 快捷方式复制到该目录，命名为 `XPipe-original.lnk`。
 3. 新建 Windows 快捷方式。目标设为 `wscript.exe //B //Nologo "<实际 Windows 安装目录>\start-with-xpipe.vbs"`，按实际安装位置调整路径，并将快捷方式固定到任务栏。
 4. 在 Windows PowerShell 中运行 `Stop-ScheduledTask -TaskName 'ClipBridge Hotkey'` 和 `Disable-ScheduledTask -TaskName 'ClipBridge Hotkey'`。保留此任务，供启动器读取参数。以后从新快捷方式启动 XPipe。
@@ -56,7 +56,7 @@ flowchart LR
 
 | 项目 | 默认值 | 含义 |
 |---|---|---|
-| `--ssh-host alias` | `debian`（兼容旧配置） | Windows 端专用长连接所用别名；使用该别名的现有密钥和主机信任配置。 |
+| `--ssh-host alias` | `linux` | Windows 端专用长连接所用别名；使用该别名的现有密钥和主机信任配置。 |
 | SSH `SetEnv CLIPBRIDGE_WS` | 必填 | `workspace-a` 或 `workspace-b`，隔离不同 Windows 设备的存储目录。 |
 | `--auto-paste terminal.exe` | 关闭 | 允许向指定的前台终端执行自动粘贴，例如 `WindowsTerminal.exe`。 |
 | `--paste-timeout seconds` | 8 秒 | 自动粘贴的等待上限，范围 1–60 秒。 |
