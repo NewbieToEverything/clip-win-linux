@@ -1,6 +1,22 @@
-# ClipBridge
+# clip-win-linux
 
-ClipBridge 将 Windows 剪贴板中的图片、文件和文件夹经 SSH 安全传到 Debian，并返回可在远程终端使用的绝对路径。
+ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux，并可把远端路径自动粘贴到终端。
+
+## 架构
+
+```mermaid
+flowchart LR
+    P["Windows 任务栏快捷方式"] --> X["XPipe"]
+    P --> H["ClipBridge 热键程序"]
+    C["Windows 剪贴板<br/>图片、文件或文件夹"] -->|"Alt+Shift+V"| H
+    H --> S["专用 SSH 长连接"]
+    S --> L["Linux 接收器<br/>校验、保留原名、写入临时缓存"]
+    L -->|"返回绝对路径"| H
+    H -->|"写入当前剪贴板，不加入 Win+V 历史"| V["Windows Terminal 执行粘贴"]
+    V -->|"XPipe 的交互 SSH 会话"| A["Linux 上的 Agent 输入框"]
+```
+
+上传和终端使用各自的 SSH 连接。XPipe 完全退出后，联动启动器会等正在进行的上传结束，再关闭 ClipBridge。Linux 接收器通过 SSH 标准输入输出工作，无需图形会话。当前在 Debian 上验证过。其他发行版需要 Python 3、Pillow 和 OpenSSH，自动清理脚本还需要 systemd 用户服务，或者由该系统的定时工具运行清理命令。
 
 ## 快速开始
 
@@ -14,6 +30,13 @@ ClipBridge 将 Windows 剪贴板中的图片、文件和文件夹经 SSH 安全�
 
 4. 在 Windows 构建环境运行 `windows/build-hotkey.ps1`。将生成的 `ClipBridgeHotkey.exe`、`clipbridge-agent.ps1` 和 `clipbridge-notify.ps1` 放在同一目录。
 5. 启动 EXE 后复制图片或文件，按 `Alt+Shift+V`。新版进度卡片用 Windows 自带 Direct2D/DirectWrite 绘制，超过约 300 毫秒才显示，避免小任务闪窗。成功后 Debian 保存原名文件并返回绝对路径。
+
+### 随 XPipe 启停（可选）
+
+1. 先用 `install-user-startup.ps1` 设置 `ClipBridge Hotkey` 计划任务的启动参数。联动脚本从这个任务读取参数。
+2. 把 `start-with-xpipe.ps1` 和 `start-with-xpipe.vbs` 放到 EXE 同目录。把原 XPipe 快捷方式复制到该目录，命名为 `XPipe-original.lnk`。
+3. 新建 Windows 快捷方式。目标设为 `wscript.exe //B //Nologo "D:\Tools\ClipBridge\start-with-xpipe.vbs"`，按实际安装位置调整路径，并将快捷方式固定到任务栏。
+4. 在 Windows PowerShell 中运行 `Stop-ScheduledTask -TaskName 'ClipBridge Hotkey'` 和 `Disable-ScheduledTask -TaskName 'ClipBridge Hotkey'`。保留此任务，供启动器读取参数。以后从新快捷方式启动 XPipe。
 
 ## 配置
 
