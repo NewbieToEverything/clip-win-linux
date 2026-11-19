@@ -9,18 +9,12 @@ ClipBridge sends images, files, and folders from the Windows clipboard to Linux 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    P["Windows taskbar shortcut (optional)"] --> X["XPipe"]
-    P --> H["ClipBridge hotkey app"]
-    C["Windows clipboard<br/>Image, file, or folder"] -->|"Alt+Shift+V"| H
-    H --> S["Dedicated persistent SSH connection"]
-    S --> L["Linux receiver<br/>Verify data, preserve names, cache files"]
-    L -->|"Return absolute Linux paths for all items"| H
-    H -->|"Write paths to clipboard, exclude from Win+V history"| V["Paste in Windows Terminal"]
-    V -->|"Interactive SSH session"| A["Terminal application on Linux"]
+flowchart TD
+    A["1. Press Alt+Shift+V on Windows"] --> B["2. ClipBridge reads images, files, or folders from the current clipboard<br/>Uploads them to Linux over a dedicated persistent SSH connection<br/>Linux returns an absolute path for each item, which ClipBridge writes to the Windows clipboard"]
+    B --> C["3. Paste into the open Windows terminal<br/>Agents that recognize image paths can show image attachment labels<br/>Regular files and folders appear as paths"]
 ```
 
-Uploads and the terminal use separate SSH connections. When XPipe exits, the optional launcher waits for any active upload before closing ClipBridge. The Linux receiver uses SSH standard input and output and works without a graphical session. The setup has been verified on Debian. Other distributions need Python 3, Pillow, and OpenSSH. For scheduled cache cleanup, use a systemd user timer or run the cleanup command with your system's scheduler.
+With automatic paste enabled, ClipBridge writes the returned paths after checking focus, the timeout, and whether the clipboard changed. It excludes the paths from `Win+V` history. Uploads and the terminal use separate SSH connections. The Linux receiver uses SSH standard input and output and works without a graphical session. The setup has been verified on Debian. Other distributions need Python 3, Pillow, and OpenSSH. For scheduled cache cleanup, use a systemd user timer or run the cleanup command with your system's scheduler.
 
 ## Quick start
 
@@ -47,6 +41,8 @@ Run the following command from the directory containing the EXE. If ClipBridge i
 
 ### Start and stop with XPipe (optional)
 
+When XPipe exits, the optional launcher waits for any active upload before closing ClipBridge.
+
 1. Run `install-user-startup.ps1 -SshHost linux -AutoPasteTerminal WindowsTerminal.exe` to configure the `ClipBridge Hotkey` scheduled task. The launcher reads its startup arguments from this task.
 2. Place `start-with-xpipe.ps1` and `start-with-xpipe.vbs` alongside the EXE. Copy your original XPipe shortcut into that directory as `XPipe-original.lnk`.
 3. Create a Windows shortcut with the target `wscript.exe //B //Nologo "<Windows install directory>\start-with-xpipe.vbs"`. Adjust the path for your installation and pin the shortcut to the taskbar.
@@ -68,7 +64,7 @@ Run the following command from the directory containing the EXE. If ClipBridge i
 ## Usage
 
 - Press `Alt+Shift+V` to upload from the Windows clipboard. ClipBridge reuses its dedicated SSH connection. Automatic paste requires a matching foreground window, an unexpired timeout, and an unchanged clipboard. If automatic paste is skipped, retrieve the paths with `clipbridge latest` in the corresponding workspace. It writes the returned paths to the current clipboard and marks them for exclusion from `Win+V` history.
-- Automatic paste uses the terminal's `Ctrl+Shift+V` shortcut. Image paths have been verified to become attachments in remote Codex CLI on Debian. Verify your own terminal and agent using the [desktop checklist](tests/manual-test-matrix.md). Regular files and folders still return paths.
+- Automatic paste uses the terminal's `Ctrl+Shift+V` shortcut. Image paths have been verified to become attachments in remote Codex CLI on Debian. For OpenCode, Pi, and Hermes, the display depends on the version and input interface. See the [desktop checklist](tests/manual-test-matrix.md). Regular files and folders still return paths.
 - The progress card appears in the lower-right corner of the original window's monitor without taking focus. It shows a percentage when the total byte count is known. Check display quality at 100%, 125%, 150%, and 200% scaling on Windows.
 - `windows/clipbridge-send.ps1` accepts the same alias via `-SshHost`, performs a one-off PNG or archive upload and prints the returned absolute Linux paths.
 - `clipbridge doctor` checks workspace routing and storage.
