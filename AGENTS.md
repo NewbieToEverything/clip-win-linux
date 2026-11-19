@@ -19,6 +19,8 @@
 
 ## Windows 端
 
+先检查 [Windows 安装与检查](DEPENDENCIES.md#windows-安装与检查)，按需准备运行环境、编译器和可选的 XPipe 联动依赖。
+
 1. 在 Windows 的 OpenSSH Host 别名 `debian` 配置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。SSH 私钥和 known_hosts 沿用用户现有配置。
 2. 在 Windows PowerShell 验证连接：
 

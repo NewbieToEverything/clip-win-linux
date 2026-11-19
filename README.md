@@ -2,6 +2,8 @@
 
 ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux，并可把远端路径自动粘贴到终端。
 
+**Windows clipboard to Linux over SSH.** Send clipboard screenshots, files, and folders to a remote Linux host, then paste the remote path into your terminal. Works with XPipe and Windows Terminal, with image paste verified in remote Codex CLI on Debian.
+
 ## 架构
 
 ```mermaid
