@@ -17,4 +17,4 @@ description: Record real ClipBridge transfers in an isolated Windows terminal an
      -loop 0 clipbridge-demo.gif
    ```
 
-6. 录完只关闭本轮专用测试窗，保留其他终端和 Agent 会话。停用临时抓帧任务。用户授权发布时，更新仓库的 `docs/clipbridge-windows-demo.gif` 和两版 README 的说明，将实机录制与模拟画面明确区分。
+6. 录完只关闭本轮专用测试窗，保留其他终端和 Agent 会话。停用临时抓帧任务。用户授权发布时，更新仓库的 `docs/clipbridge-live-demo.gif` 和两版 README 的说明，将实机录制与模拟画面明确区分。
