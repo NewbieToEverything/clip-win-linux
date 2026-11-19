@@ -20,7 +20,7 @@ sudo apt install python3 python3-pil openssh-server
 
 其他发行版使用各自的包管理器。Python 依赖声明在 [requirements.txt](requirements.txt)。接收器和定时服务默认使用 `/usr/bin/python3`，所以 Pillow 需要对这个解释器可见。只安装到虚拟环境时，须让 SSH 接收命令和定时清理都使用那个环境的解释器。
 
-当前 SSH 上传和 Windows 粘贴无需 xclip、Xvfb 或 tmux。旧版 X11 命令仍留在源码中，仅在显式调用旧入口时才需要 X11 工具。
+当前 SSH 上传和 Windows 粘贴无需 xclip、Xvfb 或 tmux。
 
 ## Windows 安装与检查
 
