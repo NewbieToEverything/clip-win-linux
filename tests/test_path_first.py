@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 
-CLI = Path(__file__).resolve().parents[1] / 'debian/clipbridge'
+CLI = Path(__file__).resolve().parents[1] / 'linux/clipbridge'
 
 
 class ReceiverTests(unittest.TestCase):
