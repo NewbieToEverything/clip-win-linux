@@ -26,14 +26,14 @@ Windows 上传代理通过 OpenSSH 启动 Linux 上的接收器（`clipbridge se
 ```mermaid
 flowchart LR
     H["① 按 Alt+Shift+V"] --> W["Windows · ClipBridge<br/>读取剪贴板"]
-    W -->|"② SSH 上传内容"| L["Linux 接收器<br/>校验并保存"]
-    L -->|"③ 回传路径并写入剪贴板"| W
-    W -->|"④ Ctrl+Shift+V 粘贴"| A["当前输入框<br/>路径或图片附件"]
+    W -->|"②"| L["Linux 接收器<br/>校验并保存"]
+    L -->|"③"| W
+    W -->|"④"| A["当前输入框<br/>路径或图片附件"]
 ```
 
-1. **读取并上传。** 按下 `Alt+Shift+V` 后，ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
-2. **保存并返回路径。** Linux 接收器校验并保存图片，然后把它的绝对路径返回给 Windows。
-3. **贴进当前输入框。** 开启自动粘贴且检查通过时，ClipBridge 把路径写入 Windows 剪贴板并触发终端的 `Ctrl+Shift+V`。支持识别图片路径的 Agent（例如 Codex CLI）会把它显示成图片附件。路径不会加入 `Win+V` 历史。
+- **① → ②** **读取并上传。** 按下 `Alt+Shift+V` 后，ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
+- **③** **保存并返回路径。** Linux 接收器校验并保存图片，然后把它的绝对路径返回给 Windows。
+- **④** **贴进当前输入框。** 开启自动粘贴且检查通过时，ClipBridge 把路径写入 Windows 剪贴板并触发终端的 `Ctrl+Shift+V`。支持识别图片路径的 Agent（例如 Codex CLI）会把它显示成图片附件。路径不会加入 `Win+V` 历史。
 
 普通文件和文件夹走同一条流程，输入框里显示的是各自的 Linux 绝对路径。
 
