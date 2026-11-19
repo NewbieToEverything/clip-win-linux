@@ -26,16 +26,13 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A["Windows · ClipBridge<br/>读取剪贴板"]
-    B["Linux 接收服务<br/>校验并保存"]
-    C["Windows 剪贴板<br/>收到 Linux 绝对路径"]
-    D["当前 Agent 输入框<br/>路径或图片附件"]
-    A -->|"Alt+Shift+V · 专用 SSH 长连接"| B
-    B -->|"回传路径"| C
-    C -->|"终端 Ctrl+Shift+V"| D
+    H["1. 按 Alt+Shift+V"] --> W["2. Windows · ClipBridge<br/>读取剪贴板"]
+    W -->|"专用 SSH 长连接：上传内容"| L["Linux 接收器<br/>校验并保存"]
+    L -->|"回传绝对路径 · 写入剪贴板"| W
+    W -->|"终端 Ctrl+Shift+V"| A["3. 当前输入框<br/>路径或图片附件"]
 ```
 
-1. **读取并上传。** 复制一张图片，再按 `Alt+Shift+V`。ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
+1. **读取并上传。** 按下 `Alt+Shift+V` 后，ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
 2. **保存并返回路径。** Linux 接收器校验并保存图片，然后把它的绝对路径返回给 Windows。
 3. **贴进当前输入框。** 开启自动粘贴且检查通过时，ClipBridge 把路径写入 Windows 剪贴板并触发终端的 `Ctrl+Shift+V`。支持识别图片路径的 Agent（例如 Codex CLI）会把它显示成图片附件。路径不会加入 `Win+V` 历史。
 

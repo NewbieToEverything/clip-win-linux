@@ -26,16 +26,13 @@ Open XPipe using the integration shortcut to connect in the background. When XPi
 
 ```mermaid
 flowchart LR
-    A["Windows · ClipBridge<br/>Reads the clipboard"]
-    B["Linux receiver service<br/>Verifies and stores files"]
-    C["Windows clipboard<br/>Absolute Linux paths"]
-    D["Active agent input<br/>Path or image attachment"]
-    A -->|"Alt+Shift+V · Persistent SSH upload"| B
-    B -->|"Return paths"| C
-    C -->|"Terminal Ctrl+Shift+V"| D
+    H["1. Press Alt+Shift+V"] --> W["2. Windows · ClipBridge<br/>Reads the clipboard"]
+    W -->|"Persistent SSH: upload content"| L["Linux receiver<br/>Verifies and stores uploads"]
+    L -->|"Return absolute paths · Write to clipboard"| W
+    W -->|"Terminal Ctrl+Shift+V"| A["3. Active input<br/>Path or image attachment"]
 ```
 
-1. **Read and upload.** Copy an image and press `Alt+Shift+V`. ClipBridge reads the Windows clipboard and uploads the image to Linux over its dedicated persistent SSH connection.
+1. **Read and upload.** When you press `Alt+Shift+V`, ClipBridge reads the Windows clipboard and uploads the image to Linux over its dedicated persistent SSH connection.
 2. **Save and return the path.** The Linux receiver verifies and stores the image, then sends its absolute path back to Windows.
 3. **Paste into the current input.** If automatic paste is enabled and the checks pass, ClipBridge writes the path to the Windows clipboard and triggers `Ctrl+Shift+V` in the terminal. An agent that recognizes image paths, such as Codex CLI, displays the image as an attachment. The path stays out of `Win+V` history.
 
