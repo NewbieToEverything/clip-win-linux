@@ -12,11 +12,18 @@ ClipBridge 将 Windows 剪贴板里的图片、文件和文件夹传到 Linux。
 
 ```mermaid
 flowchart LR
-    A["1. 按 Alt+Shift+V"] --> B["2. 上传并取回路径"]
-    B --> C["3. 在终端粘贴"]
+    A["Windows 剪贴板<br/>图片、文件或文件夹"]
+    B["Linux 接收器<br/>保存上传内容"]
+    C["Windows 剪贴板<br/>收到 Linux 绝对路径"]
+    D["当前 Agent 输入框<br/>路径或图片附件"]
+    A -->|"Alt+Shift+V · SSH 上传"| B
+    B -->|"回传路径"| C
+    C -->|"终端 Ctrl+Shift+V"| D
 ```
 
-上传和终端使用各自的 SSH 连接。XPipe 完全退出后，联动启动器会等正在进行的上传结束，再关闭 ClipBridge。Linux 接收器通过 SSH 标准输入输出工作，无需图形会话。当前在 Debian 上验证过。其他发行版需要 Python 3、Pillow 和 OpenSSH，自动清理脚本还需要 systemd 用户服务，或者由该系统的定时工具运行清理命令。
+按下热键后，ClipBridge 读取 Windows 当前剪贴板，通过专用 SSH 长连接上传实际内容。Linux 校验并保存后，为每个上传项返回绝对路径。
+
+开启自动粘贴且焦点、时限与剪贴板检查通过时，ClipBridge 把路径写入 Windows 当前剪贴板，但不加入 `Win+V` 历史。随后它在已打开的 Windows 终端触发 `Ctrl+Shift+V`。支持图片路径识别的 Agent（例如已验证的 Codex CLI）可以显示图片附件。普通文件和文件夹显示为路径。
 
 ### 长连接随 XPipe 启停（可选）
 
