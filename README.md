@@ -25,10 +25,10 @@ Open XPipe from the integration shortcut and ClipBridge connects in the backgrou
 
 ```mermaid
 flowchart LR
-    H["1. Press Alt+Shift+V"] --> W["2. Windows · ClipBridge<br/>Reads the clipboard"]
-    W -->|"Persistent SSH: upload content"| L["Linux receiver<br/>Verifies and stores uploads"]
-    L -->|"Return absolute paths · Write to clipboard"| W
-    W -->|"Terminal Ctrl+Shift+V"| A["3. Active input<br/>Path or image attachment"]
+    H["① Press Alt+Shift+V"] --> W["Windows · ClipBridge<br/>Reads the clipboard"]
+    W -->|"② Upload over SSH"| L["Linux receiver<br/>Verifies and stores uploads"]
+    L -->|"③ Return paths to clipboard"| W
+    W -->|"④ Paste with Ctrl+Shift+V"| A["Active input<br/>Path or image attachment"]
 ```
 
 1. **Read and upload.** When you press `Alt+Shift+V`, ClipBridge reads the Windows clipboard and uploads the image to Linux over its dedicated persistent SSH connection.

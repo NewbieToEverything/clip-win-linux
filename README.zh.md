@@ -25,10 +25,10 @@ Windows 上传代理通过 OpenSSH 启动 Linux 上的接收器（`clipbridge se
 
 ```mermaid
 flowchart LR
-    H["1. 按 Alt+Shift+V"] --> W["2. Windows · ClipBridge<br/>读取剪贴板"]
-    W -->|"专用 SSH 长连接：上传内容"| L["Linux 接收器<br/>校验并保存"]
-    L -->|"回传绝对路径 · 写入剪贴板"| W
-    W -->|"终端 Ctrl+Shift+V"| A["3. 当前输入框<br/>路径或图片附件"]
+    H["① 按 Alt+Shift+V"] --> W["Windows · ClipBridge<br/>读取剪贴板"]
+    W -->|"② SSH 上传内容"| L["Linux 接收器<br/>校验并保存"]
+    L -->|"③ 回传路径并写入剪贴板"| W
+    W -->|"④ Ctrl+Shift+V 粘贴"| A["当前输入框<br/>路径或图片附件"]
 ```
 
 1. **读取并上传。** 按下 `Alt+Shift+V` 后，ClipBridge 从 Windows 剪贴板读取图片，通过专用 SSH 长连接把图片传到 Linux。
