@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 """ClipBridge v5 receiver and bounded temporary-cache manager."""
+import contextlib
 import datetime
+import errno
 import fcntl
 import hashlib
 import json
@@ -506,11 +508,131 @@ def dispatch(args):
     raise ValueError('Invalid ClipBridge command')
 
 
+def unwrap_download_path(source):
+    if not isinstance(source, str) or len(source.encode('utf-8')) > 4096:
+        raise ValueError('DOWNLOAD_PATH')
+    lines = source.replace('\r\n', '\n').split('\n')
+    if len(lines) == 1:
+        return source
+    if len(lines) > 9:
+        raise ValueError('DOWNLOAD_WRAP_LIMIT')
+    lines = [line.strip(' \t') for line in lines]
+    if (not lines[0].startswith('/') or any(not line for line in lines)
+            or any(any(ord(c) < 32 or ord(c) == 127 for c in line) for line in lines)):
+        raise ValueError('DOWNLOAD_PATH')
+
+    # Terminal wrapping can remove a word separator or break inside a name.
+    # Only probe exact candidates, without scanning any directories.
+    for line in lines[1:]:
+        if line.startswith('/') and os.path.lexists(line):
+            raise ValueError('DOWNLOAD_WRAP_AMBIGUOUS')
+    candidates = {lines[0]}
+    for continuation in lines[1:]:
+        candidates = {prefix + separator + continuation for prefix in candidates
+                      for separator in ('', ' ')}
+    match = None
+    for candidate in candidates:
+        if candidate.startswith('//') or any(part in ('', '.', '..')
+                                             for part in candidate.rstrip('/').split('/')[1:]):
+            continue
+        try:
+            os.lstat(candidate)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as error:
+            if error.errno == errno.ENAMETOOLONG:
+                continue
+            raise
+        if match is not None:
+            raise ValueError('DOWNLOAD_WRAP_AMBIGUOUS')
+        match = candidate
+    if match is None:
+        raise ValueError('DOWNLOAD_WRAP_NOT_FOUND')
+    return match
+
+
+def send_download(out, source):
+    source = unwrap_download_path(source)
+    if (not isinstance(source, str) or not source.startswith('/') or source.startswith('//')
+            or len(source.encode('utf-8')) > 4096):
+        raise ValueError('DOWNLOAD_PATH')
+    parts = source.rstrip('/').split('/')[1:]
+    if not parts or any(part in ('', '.', '..') or any(ord(c) < 32 or ord(c) == 127 for c in part)
+                        for part in parts):
+        raise ValueError('DOWNLOAD_PATH')
+
+    entries = []
+    seen = set()
+    total = 0
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+
+    with contextlib.ExitStack() as handles:
+        def open_at(name, parent=None, directory=False):
+            fd = os.open(name, flags | (os.O_DIRECTORY if directory else 0), dir_fd=parent)
+            handles.callback(os.close, fd)
+            return fd
+
+        def collect(parent, name, relative):
+            nonlocal total
+            safe_parts(relative)
+            key = relative.casefold()
+            if key in seen:
+                raise ValueError('DOWNLOAD_NAME_COLLISION')
+            if len(entries) >= ENTRY_LIMIT:
+                raise ValueError('DOWNLOAD_LIMIT')
+            seen.add(key)
+            mode = os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise ValueError('DOWNLOAD_TYPE')
+            fd = open_at(name, parent)
+            info = os.fstat(fd)
+            if stat.S_ISDIR(info.st_mode):
+                entries.append((relative, 'directory', fd, info))
+                with os.scandir(fd) as children:
+                    for child in children:
+                        collect(fd, child.name, f'{relative}/{child.name}')
+            elif stat.S_ISREG(info.st_mode):
+                total += info.st_size
+                if info.st_size > FILE_LIMIT or total > BATCH_LIMIT:
+                    raise ValueError('DOWNLOAD_LIMIT')
+                entries.append((relative, 'file', fd, info))
+            else:
+                raise ValueError('DOWNLOAD_TYPE')
+
+        parent = open_at('/', directory=True)
+        for part in parts[:-1]:
+            parent = open_at(part, parent, directory=True)
+        collect(parent, parts[-1], parts[-1])
+        write_frame(out, {'ok': True, 'status': 'download', 'bytes': total,
+                          'entries': [{'path': path, 'type': kind,
+                                       'size': info.st_size if kind == 'file' else 0}
+                                      for path, kind, _, info in entries]})
+        hashes = []
+        for _, kind, fd, info in entries:
+            if kind == 'directory':
+                continue
+            digest = hashlib.sha256()
+            remaining = info.st_size
+            while remaining:
+                block = os.read(fd, min(remaining, 1024 * 1024))
+                if not block:
+                    raise ValueError('DOWNLOAD_CHANGED')
+                out.write(block)
+                digest.update(block)
+                remaining -= len(block)
+            current = os.fstat(fd)
+            if (info.st_size, info.st_mtime_ns, info.st_ctime_ns) != (
+                    current.st_size, current.st_mtime_ns, current.st_ctime_ns):
+                raise ValueError('DOWNLOAD_CHANGED')
+            hashes.append(digest.hexdigest())
+        write_frame(out, {'ok': True, 'status': 'download-complete', 'sha256': hashes})
+
+
 def serve(share, state, workspace):
     # Wire format: CBR5 + u32 header length + UTF-8 JSON metadata + ordered raw files;
     # response: u32 length + JSON ACK. stdout is protocol only; diagnostics use stderr.
     inp, out = sys.stdin.buffer, sys.stdout.buffer
-    write_frame(out, {'ok': True, 'version': 1, 'status': 'ready', 'workspace': workspace})
+    write_frame(out, {'ok': True, 'version': 1, 'status': 'ready', 'workspace': workspace, 'download': True})
     while True:
         magic = read_exact(inp, 4)
         if magic is None:
@@ -527,6 +649,9 @@ def serve(share, state, workspace):
             header = json.loads(read_exact(inp, header_len).decode('utf-8'))
             if header.get('version') != 1 or header.get('workspace') != workspace:
                 raise ValueError('Protocol version or workspace mismatch')
+            if header.get('kind') == 'download':
+                send_download(out, header.get('path'))
+                continue
             entries = header.get('entries')
             if (not isinstance(entries, list) or header.get('file_count') != len(entries) or
                     header.get('kind') not in ('image', 'files') or

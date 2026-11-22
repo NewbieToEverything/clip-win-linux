@@ -22,6 +22,27 @@ function Get-DisplayError([string]$message) {
         'EXPIRED' { if ($zh) { return '原发送请求已过期，请重新发送。' }; return 'The previous transfer request expired. Send it again.' }
         'REQUEST_ID_CONFLICT' { if ($zh) { return '发送请求 ID 冲突。' }; return 'The transfer request ID conflicts with an earlier request.' }
     }
+    switch -Exact ($message) {
+        'DOWNLOAD_WRAP_LIMIT' { if ($zh) { return '断行太多，请复制完整的单行路径。' }; return 'Too many line breaks. Copy the complete path on one line.' }
+        'DOWNLOAD_WRAP_AMBIGUOUS' { if ($zh) { return '断行可拼成多个有效路径，请重新复制完整路径。' }; return 'The wrapped text matches multiple paths. Copy one complete path.' }
+        'DOWNLOAD_WRAP_NOT_FOUND' { if ($zh) { return '未找到断行前的路径，请重新复制完整路径。' }; return 'Could not find the wrapped path. Copy one complete path.' }
+        'DOWNLOAD_PATH' { if ($zh) { return '请复制一个 Linux 绝对路径后重试。' }; return 'Copy one absolute Linux path, then try again.' }
+        'DOWNLOAD_CLIPBOARD_CHANGED' { if ($zh) { return '剪贴板内容已变化。' }; return 'Clipboard content changed.' }
+        'DOWNLOAD_UNSUPPORTED' { if ($zh) { return '请先更新 Linux 接收端。' }; return 'Update the Linux ClipBridge receiver first.' }
+        'DOWNLOAD_RESPONSE' { if ($zh) { return 'Linux 下载回执不完整或无效。' }; return 'The Linux download response was incomplete or invalid.' }
+        'DOWNLOAD_CHECKSUM' { if ($zh) { return '下载校验失败。' }; return 'Download checksum verification failed.' }
+        'DOWNLOAD_CHANGED' { if ($zh) { return 'Linux 文件在传输时发生了变化。' }; return 'The Linux file changed during transfer.' }
+        'DOWNLOAD_LIMIT' { if ($zh) { return '下载超过文件、目录或大小限制。' }; return 'The download exceeds the file, folder, or size limits.' }
+        'DOWNLOAD_TYPE' { if ($zh) { return '只支持普通文件和文件夹。' }; return 'Only regular files and folders are supported.' }
+        'DOWNLOAD_NAME_COLLISION' { if ($zh) { return '有两个 Linux 名称在 Windows 上冲突。' }; return 'Two Linux names conflict on Windows.' }
+        'DOWNLOAD_NAME' { if ($zh) { return '文件名无法在 Windows 上使用。' }; return 'The name cannot be used on Windows.' }
+        'Unsafe source path component' { if ($zh) { return '文件名无法在 Windows 上使用。' }; return 'The name cannot be used on Windows.' }
+        'Source path exceeds limits' { if ($zh) { return '下载路径超过限制。' }; return 'The download path exceeds the limits.' }
+        'DOWNLOAD_CACHE' { if ($zh) { return 'Windows 下载缓存目录不可用。' }; return 'The Windows cache directory is unavailable.' }
+        'FileNotFoundError' { if ($zh) { return 'Linux 路径不存在。' }; return 'The Linux path does not exist.' }
+        'NotADirectoryError' { if ($zh) { return 'Linux 路径包含无效目录或符号链接。' }; return 'A Linux path component is not a directory or is a link.' }
+        'PermissionError' { if ($zh) { return 'Linux 路径不可读取。' }; return 'The Linux path is not readable.' }
+    }
     if (!$zh) { return $message }
     switch -Exact ($message) {
         'Clipboard contains no image or file list.' { return '剪贴板里没有图片或文件。' }
@@ -103,6 +124,7 @@ function Start-SshChannel {
         $ready.status -cne 'ready' -or $ready.workspace -notin @('workspace-a', 'workspace-b')) {
         throw 'Debian receiver did not return a valid ready frame.'
     }
+    $script:downloadSupported = $ready.download -eq $true
     return $ready.workspace
 }
 
@@ -325,6 +347,132 @@ function Send-Request {
     return @($receipt.paths) -join ' '
 }
 
+function Receive-Download([uint32]$sequence) {
+    if (!('ClipBridgeClipboard' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class ClipBridgeClipboard {
+    [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+}
+'@
+    }
+    if ([ClipBridgeClipboard]::GetClipboardSequenceNumber() -ne $sequence) { throw 'DOWNLOAD_CLIPBOARD_CHANGED' }
+    $source = [Windows.Forms.Clipboard]::GetText().Trim()
+    if ([ClipBridgeClipboard]::GetClipboardSequenceNumber() -ne $sequence) { throw 'DOWNLOAD_CLIPBOARD_CHANGED' }
+    if ($source -cnotmatch '^/[^/]' -or $source -match '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]' -or
+        [Text.Encoding]::UTF8.GetByteCount($source) -gt 4096) { throw 'DOWNLOAD_PATH' }
+
+    Write-Status 'connecting'
+    if ($null -eq $script:ssh -or $script:ssh.HasExited) {
+        if ((Start-SshChannel) -cne $script:workspace) { throw 'SSH receiver workspace mismatch.' }
+    }
+    if (!$script:downloadSupported) { throw 'DOWNLOAD_UNSUPPORTED' }
+    $request = @{version=1; workspace=$script:workspace; kind='download'; path=$source}
+    $body = [Text.Encoding]::UTF8.GetBytes(($request | ConvertTo-Json -Compress))
+    $length = [BitConverter]::GetBytes([uint32]$body.Length)
+    [Array]::Reverse($length)
+    $inputStream = $script:ssh.StandardInput.BaseStream
+    $outputStream = $script:ssh.StandardOutput.BaseStream
+    $magic = [Text.Encoding]::ASCII.GetBytes('CBR5')
+    $inputStream.Write($magic, 0, $magic.Length)
+    $inputStream.Write($length, 0, $length.Length)
+    $inputStream.Write($body, 0, $body.Length)
+    $inputStream.Flush()
+    $manifest = Read-Frame $outputStream
+    if ($manifest.ok -eq $false -and $manifest.error -cmatch '^(DOWNLOAD_[A-Z_]+|Unsafe source path component|Source path exceeds limits|FileNotFoundError|PermissionError|NotADirectoryError|OSError)$') {
+        throw ([string]$manifest.error)
+    }
+    $entries = @($manifest.entries)
+    if ($manifest.ok -ne $true -or $manifest.status -cne 'download' -or $entries.Count -lt 1 -or $entries.Count -gt 200) {
+        throw 'DOWNLOAD_RESPONSE'
+    }
+
+    $paths = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $root = [string]$entries[0].path
+    $total = 0L
+    foreach ($entry in $entries) {
+        $relative = [string]$entry.path
+        $parts = $relative.Split('/')
+        if ($parts.Count -gt 32 -or $parts[0] -cne $root -or
+            $entry.type -cnotin @('file','directory') -or
+            ($entry.size -isnot [int] -and $entry.size -isnot [long]) -or
+            $entry.size -lt 0 -or $entry.size -gt 128MB -or ($entry.type -ceq 'directory' -and $entry.size -ne 0)) {
+            throw 'DOWNLOAD_RESPONSE'
+        }
+        foreach ($part in $parts) {
+            if (!$part -or $part.Length -gt 255 -or $part -match '[<>:"|?*\\\x00-\x1f\x7f]|[. ]$' -or
+                $part -match '^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)') {
+                throw 'DOWNLOAD_NAME'
+            }
+        }
+        if ($paths.ContainsKey($relative)) { throw 'DOWNLOAD_NAME_COLLISION' }
+        if ($parts.Count -gt 1) {
+            $parent = $relative.Substring(0, $relative.LastIndexOf('/'))
+            if (!$paths.ContainsKey($parent) -or $paths[$parent] -cne 'directory') { throw 'DOWNLOAD_RESPONSE' }
+        }
+        $paths.Add($relative, $entry.type)
+        $total += $entry.size
+    }
+    if ($total -gt 256MB -or $manifest.bytes -ne $total) { throw 'DOWNLOAD_LIMIT' }
+
+    Write-DisplayName $root
+    $cache = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ClipBridge\Downloads'
+    $null = [IO.Directory]::CreateDirectory($cache)
+    foreach ($folder in @($cache, (Split-Path -Parent $cache))) {
+        if ([IO.File]::GetAttributes($folder) -band [IO.FileAttributes]::ReparsePoint) { throw 'DOWNLOAD_CACHE' }
+    }
+    $id = [Guid]::NewGuid().ToString('N')
+    $stage = Join-Path $cache ($id + '.partial')
+    $destination = Join-Path $cache $id
+    $hashes = [Collections.Generic.List[string]]::new()
+    $null = [IO.Directory]::CreateDirectory($stage)
+    try {
+        $done = 0L
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        if ($total -gt 0) { Write-AgentLine "PROGRESS 0 $total" }
+        foreach ($entry in $entries) {
+            $target = Join-Path $stage ($entry.path.Replace('/', '\'))
+            if ($entry.type -ceq 'directory') {
+                $null = [IO.Directory]::CreateDirectory($target)
+                continue
+            }
+            $hash = [Security.Cryptography.SHA256]::Create()
+            try {
+                $file = [IO.File]::Open($target, [IO.FileMode]::CreateNew)
+                try {
+                    $remaining = [long]$entry.size
+                    while ($remaining -gt 0) {
+                        $block = Read-Exact $outputStream ([int][Math]::Min(65536L, $remaining))
+                        $file.Write($block, 0, $block.Length)
+                        [void]$hash.TransformBlock($block, 0, $block.Length, $block, 0)
+                        $remaining -= $block.Length
+                        $done += $block.Length
+                        if ($clock.ElapsedMilliseconds -ge 120 -or $done -eq $total) {
+                            Write-AgentLine "PROGRESS $done $total"
+                            $clock.Restart()
+                        }
+                    }
+                    [void]$hash.TransformFinalBlock([byte[]]::new(0), 0, 0)
+                    $hashes.Add([BitConverter]::ToString($hash.Hash).Replace('-', '').ToLowerInvariant())
+                } finally { $file.Dispose() }
+            } finally { $hash.Dispose() }
+        }
+        $receipt = Read-Frame $outputStream
+        if ($receipt.ok -ne $true -or $receipt.status -cne 'download-complete' -or @($receipt.sha256).Count -ne $hashes.Count) {
+            throw 'DOWNLOAD_RESPONSE'
+        }
+        for ($i = 0; $i -lt $hashes.Count; $i++) {
+            if ($receipt.sha256[$i] -cne $hashes[$i]) { throw 'DOWNLOAD_CHECKSUM' }
+        }
+        [IO.Directory]::SetLastWriteTimeUtc($stage, [DateTime]::UtcNow)
+        [IO.Directory]::Move($stage, $destination)
+        return (Join-Path $destination $root)
+    } finally {
+        if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage, $true) }
+    }
+}
+
+
 try {
     $sshConfig = (Get-Command ssh.exe -CommandType Application).Source
     $probe = [Diagnostics.ProcessStartInfo]::new()
@@ -345,9 +493,10 @@ try {
     Write-AgentLine 'READY'
     while ($null -ne ($command = [Console]::In.ReadLine())) {
         if ($command -ceq 'STOP') { break }
-        if ($command -cne 'UPLOAD') { Write-AgentLine ('ERROR ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Unknown agent command.'))); continue }
+        $download = $command -cmatch '^DOWNLOAD ([0-9]{1,10})$'
+        if (!$download -and $command -cne 'UPLOAD') { Write-AgentLine ('ERROR ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Unknown agent command.'))); continue }
         try {
-            $path = Send-Request
+            $path = if ($download) { Receive-Download ([uint32]$Matches[1]) } else { Send-Request }
             Write-AgentLine ('PATH ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($path)))
         } catch {
             Stop-SshChannel

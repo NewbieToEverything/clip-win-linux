@@ -19,6 +19,7 @@
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <atomic>
+#include <chrono>
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -38,6 +39,8 @@ constexpr UINT connectionFailed = WM_APP + 4;
 constexpr UINT_PTR pasteDeadline = 1;
 constexpr UINT_PTR statusExpiry = 2;
 constexpr UINT hotkeyId = 1;
+constexpr UINT downloadHotkeyId = 2;
+constexpr UINT_PTR cleanupDownloads = 3;
 constexpr wchar_t title[] = L"ClipBridge";
 constexpr wchar_t windowClass[] = L"ClipBridgeHotkeyWindow";
 constexpr wchar_t progressClass[] = L"ClipBridgeProgressWindow";
@@ -73,6 +76,7 @@ struct Upload {
     unsigned long long focusGeneration{};
     ULONGLONG started{};
     bool pasteCandidate{};
+    bool downloading{};
     DWORD clipboardSequence{};
     std::uint64_t requestId{};
     std::string path;
@@ -98,6 +102,7 @@ std::wstring resultDetail;
 unsigned long long completedBytes;
 unsigned long long totalBytes;
 bool totalKnown;
+bool downloading;
 ID2D1Factory* d2dFactory;
 IDWriteFactory* writeFactory;
 IDWriteTextFormat* titleFormat;
@@ -172,7 +177,7 @@ void drawProgress(HWND hwnd) {
     constexpr float horizontalMargin = 20;
     constexpr float barY = 76;
     renderTarget->FillEllipse(D2D1::Ellipse(D2D1::Point2F(22, titleY + 12), 4, 4), accentBrush);
-    const std::wstring line = resultLabel.empty() ? ui(L"Sending", L"正在发送") : resultLabel;
+    const std::wstring line = resultLabel.empty() ? (downloading ? ui(L"Downloading", L"正在下载") : ui(L"Sending", L"正在发送")) : resultLabel;
     renderTarget->DrawText(line.c_str(), static_cast<UINT32>(line.size()), titleFormat,
         D2D1::RectF(36, titleY, width - 18, resultLabel.empty() || !resultDetail.empty() ? 36.0f : 74.0f), foregroundBrush,
         D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -556,15 +561,19 @@ std::string decodeBase64(const std::string& text) {
     return result;
 }
 
-std::string sendUpload(HWND target, std::uint64_t requestId, const std::atomic_bool& cancel, std::wstring& error) {
+std::string transfer(HWND target, const Upload& task, std::wstring& error) {
+    const auto& cancel = *task.cancel;
+    const auto requestId = task.requestId;
     std::lock_guard<std::mutex> lock(agentMutex);
-    if (cancel.load()) { error = ui(L"Send cancelled.", L"发送已取消。"); return {}; }
+    if (cancel.load()) { error = ui(L"Transfer cancelled.", L"传输已取消。"); return {}; }
     if (!agentProcess && !startAgent(target, cancel, error)) return {};
-    const char command[] = "UPLOAD\n";
+    const std::string command = task.downloading
+        ? "DOWNLOAD " + std::to_string(task.clipboardSequence) + "\n"
+        : "UPLOAD\n";
     DWORD written = 0;
-    if (!WriteFile(agentInput, command, static_cast<DWORD>(sizeof(command) - 1), &written, nullptr) ||
-        written != sizeof(command) - 1) {
-        error = ui(L"The persistent SSH channel disconnected. Press Alt+Shift+V to retry.", L"SSH 连接已断开。按 Alt+Shift+V 重试。");
+    if (!WriteFile(agentInput, command.data(), static_cast<DWORD>(command.size()), &written, nullptr) ||
+        written != command.size()) {
+        error = ui(L"The persistent SSH channel disconnected. Press the hotkey to retry.", L"SSH 连接已断开，请重新按快捷键。");
         closeAgent();
         return {};
     }
@@ -583,7 +592,7 @@ std::string sendUpload(HWND target, std::uint64_t requestId, const std::atomic_b
         }
         if (line.rfind("ERROR ", 0) == 0) {
             error = utf8ToWide(decodeBase64(line.substr(6)));
-            if (error.empty()) error = ui(L"Send failed. Check the ClipBridge status.", L"发送失败。");
+            if (error.empty()) error = ui(L"Transfer failed.", L"传输失败。");
             break;
         }
         if (line.rfind("FATAL ", 0) == 0) {
@@ -601,7 +610,9 @@ std::string sendUpload(HWND target, std::uint64_t requestId, const std::atomic_b
         return {};
     }
     if (result.empty() && error.empty()) {
-        error = awaitingReceipt
+        error = task.downloading
+            ? ui(L"Download timed out or the SSH connection closed.", L"下载超时或 SSH 连接已断开。")
+            : awaitingReceipt
             ? ui(L"No complete receipt from Linux. The remote save status is unknown.",
                 L"未收到完整的 Linux 回执，无法确认远端是否已保存。")
             : ui(L"Send timed out or the SSH channel disconnected. No path was entered.",
@@ -637,35 +648,51 @@ std::wstring utf8ToWide(const std::string& text) {
     return result;
 }
 
-bool setClipboard(const std::string& path, DWORD sequence, DWORD& writtenSequence) {
+enum class ClipboardWrite { Written, Changed, Busy, Failed };
+
+ClipboardWrite setClipboard(const std::string& path, DWORD sequence, DWORD& writtenSequence, bool fileDrop = false) {
     const UINT historyFormat = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
-    if (!historyFormat || !OpenClipboard(window)) return false;
+    if (!historyFormat) return ClipboardWrite::Failed;
+    bool opened = false;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        if (OpenClipboard(window)) { opened = true; break; }
+        if (attempt < 3) Sleep(10);
+    }
+    if (!opened) return ClipboardWrite::Busy;
     if (GetClipboardSequenceNumber() != sequence) {
         CloseClipboard();
-        return false;
+        return ClipboardWrite::Changed;
     }
     const auto text = utf8ToWide(path);
-    if (text.empty()) { CloseClipboard(); return false; }
+    if (text.empty()) { CloseClipboard(); return ClipboardWrite::Failed; }
     const auto bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    const auto prefix = fileDrop ? sizeof(DROPFILES) : 0;
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
+        prefix + bytes + (fileDrop ? sizeof(wchar_t) : 0));
     bool success = false;
     // A zero DWORD tells Windows to exclude this clipboard item from Win+V.
     HGLOBAL historyFlag = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DWORD));
     if (memory && historyFlag) {
         if (void* dest = GlobalLock(memory)) {
-            std::memcpy(dest, text.c_str(), bytes);
+            if (fileDrop) {
+                auto* header = static_cast<DROPFILES*>(dest);
+                header->pFiles = sizeof(DROPFILES);
+                header->fWide = TRUE;
+            }
+            std::memcpy(static_cast<char*>(dest) + prefix, text.c_str(), bytes);
             GlobalUnlock(memory);
             if (EmptyClipboard() && SetClipboardData(historyFormat, historyFlag)) {
                 historyFlag = nullptr; // Windows owns the handle after success.
-                success = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+                success = SetClipboardData(fileDrop ? CF_HDROP : CF_UNICODETEXT, memory) != nullptr;
             }
         }
     }
     if (!success && memory) GlobalFree(memory);
     if (historyFlag) GlobalFree(historyFlag);
-    if (success) writtenSequence = GetClipboardSequenceNumber();
     CloseClipboard();
-    return success;
+    if (!success) return ClipboardWrite::Failed;
+    writtenSequence = GetClipboardSequenceNumber();
+    return GetClipboardOwner() == window ? ClipboardWrite::Written : ClipboardWrite::Changed;
 }
 
 bool paste(const Upload& upload, DWORD writtenSequence) {
@@ -686,7 +713,7 @@ bool paste(const Upload& upload, DWORD writtenSequence) {
         if (i >= 3) input[i].ki.dwFlags = KEYEVENTF_KEYUP;
     }
     if (upload.target != GetForegroundWindow() ||
-        GetClipboardSequenceNumber() != writtenSequence) return false;
+        GetClipboardOwner() != window || GetClipboardSequenceNumber() != writtenSequence) return false;
     return SendInput(ARRAYSIZE(input), input, sizeof(INPUT)) == ARRAYSIZE(input);
 }
 
@@ -694,9 +721,38 @@ void CALLBACK foregroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, D
     ++focusGeneration;
 }
 
+void pruneDownloads() {
+    PWSTR local = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local))) return;
+    const std::filesystem::path root = std::filesystem::path(local) / L"ClipBridge" / L"Downloads";
+    CoTaskMemFree(local);
+    for (const auto& folder : {root, root.parent_path()}) {
+        const auto attributes = GetFileAttributesW(folder.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return;
+    }
+    std::error_code error;
+    const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+    for (std::filesystem::directory_iterator it(root, error), end; !error && it != end; it.increment(error)) {
+        const auto name = it->path().filename().wstring();
+        if ((name.size() != 32 && (name.size() != 40 || name.substr(32) != L".partial")) ||
+            name.find_first_not_of(L"0123456789abcdef") < 32) continue;
+        const auto attributes = GetFileAttributesW(it->path().c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY) ||
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+        std::error_code itemError;
+        const auto modified = it->last_write_time(itemError);
+        if (!itemError && modified < cutoff) std::filesystem::remove_all(it->path(), itemError);
+    }
+}
+
+void scheduleDownloadCleanup() {
+    try { std::thread([] { try { pruneDownloads(); } catch (...) {} }).detach(); }
+    catch (...) {}
+}
+
 LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (message == WM_HOTKEY && wParam == hotkeyId && !closing) {
-        if (active) { notify(ui(L"A transfer is already in progress.", L"已有发送正在进行。")); return 0; }
+    if (message == WM_HOTKEY && (wParam == hotkeyId || wParam == downloadHotkeyId) && !closing) {
+        if (active) { notify(ui(L"A transfer is already in progress.", L"已有传输正在进行。")); return 0; }
         auto upload = std::make_unique<Upload>();
         upload->target = GetForegroundWindow();
         GetWindowThreadProcessId(upload->target, &upload->pid);
@@ -705,7 +761,8 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         upload->clipboardSequence = GetClipboardSequenceNumber();
         upload->requestId = nextRequestId.fetch_add(1);
         activeRequestId = upload->requestId;
-        upload->pasteCandidate = !terminal.empty() &&
+        upload->downloading = downloading = wParam == downloadHotkeyId;
+        upload->pasteCandidate = !downloading && !terminal.empty() &&
             !_wcsicmp(processName(upload->pid).c_str(), terminal.c_str());
         statusMonitor = MonitorFromWindow(upload->target, MONITOR_DEFAULTTOPRIMARY);
         currentDpi = GetDpiForWindow(upload->target);
@@ -724,15 +781,15 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         refreshProgress();
         try {
             std::thread([task = std::move(upload), hwnd]() mutable {
-                try { task->path = sendUpload(hwnd, task->requestId, *task->cancel, task->error); }
-                catch (...) { task->error = ui(L"Send failed unexpectedly. No path was entered.", L"发送意外失败，未粘贴路径。"); }
+                try { task->path = transfer(hwnd, *task, task->error); }
+                catch (...) { task->error = ui(L"Transfer failed unexpectedly.", L"传输意外失败。"); }
                 Upload* result = task.release();
                 if (!PostMessageW(hwnd, finished, 0, reinterpret_cast<LPARAM>(result))) delete result;
             }).detach();
         } catch (...) {
             active.reset();
             KillTimer(hwnd, pasteDeadline);
-            showResult(ui(L"Could not start sending.", L"无法开始发送。"));
+            showResult(ui(L"Could not start the transfer.", L"无法开始传输。"));
         }
         return 0;
     }
@@ -766,6 +823,10 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         if (!closing && error) showResult(*error);
         return 0;
     }
+    if (message == WM_TIMER && wParam == cleanupDownloads) {
+        scheduleDownloadCleanup();
+        return 0;
+    }
     if (message == WM_TIMER && wParam == pasteDeadline) {
         KillTimer(hwnd, pasteDeadline);
         if (active && !closing) {
@@ -788,6 +849,25 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             DestroyWindow(hwnd);
             return 0;
         }
+        if (upload->downloading) {
+            if (upload->cancel->load()) {
+                showResult(ui(L"Download cancelled", L"下载已取消"));
+            } else if (!upload->error.empty() || upload->path.empty()) {
+                showResult(ui(L"Download failed", L"下载失败"), upload->error);
+            } else {
+                DWORD writtenSequence = 0;
+                const auto clipboard = setClipboard(upload->path, upload->clipboardSequence, writtenSequence, true);
+                if (clipboard == ClipboardWrite::Written) {
+                    showResult(ui(L"Downloaded. Press Ctrl+V in Explorer.", L"下载成功。在资源管理器按 Ctrl+V 粘贴。"));
+                } else {
+                    const auto reason = clipboard == ClipboardWrite::Changed
+                        ? ui(L"Clipboard content changed.", L"剪贴板内容已变化。")
+                        : ui(L"Could not write the file to the clipboard.", L"无法将文件写入剪贴板。");
+                    showResult(ui(L"Downloaded to the Windows cache", L"已下载到 Windows 缓存"), reason);
+                }
+            }
+            return 0;
+        }
         if (upload->cancel->load())
             showResult(ui(L"Send cancelled. Server commit status may be unknown.", L"发送已取消，无法确认远端是否已保存。"));
         else if (!upload->error.empty())
@@ -797,14 +877,21 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                 ui(L"Linux did not return a usable path.", L"Linux 未返回可用路径。"));
         else {
             DWORD writtenSequence = 0;
-            const bool copied = setClipboard(upload->path, upload->clipboardSequence, writtenSequence);
-            if (copied && paste(*upload, writtenSequence)) {
+            const auto clipboard = setClipboard(upload->path, upload->clipboardSequence, writtenSequence);
+            if (clipboard == ClipboardWrite::Written && paste(*upload, writtenSequence)) {
                 hideStatus();
-            } else if (copied && GetClipboardSequenceNumber() == writtenSequence) {
+            } else if (clipboard == ClipboardWrite::Written && GetClipboardOwner() == window &&
+                       GetClipboardSequenceNumber() == writtenSequence) {
                 showResult(ui(L"Sent successfully. Press Ctrl+V to paste.", L"发送成功。按 Ctrl+V 粘贴。"));
             } else {
-                showResult(ui(L"Sent successfully. Path not in clipboard. Run clipbridge latest to retrieve it.",
-                    L"发送成功，路径未写入剪贴板。运行 clipbridge latest 查看路径。"));
+                const auto reason = clipboard == ClipboardWrite::Busy
+                    ? ui(L"Clipboard is busy.", L"剪贴板正被其他程序占用。")
+                    : clipboard == ClipboardWrite::Failed
+                        ? ui(L"Could not write the path to the clipboard.", L"无法把路径写入剪贴板。")
+                        : ui(L"Clipboard content changed.", L"剪贴板内容已变化。");
+                showResult(ui(L"Sent successfully", L"发送成功"),
+                    std::wstring(reason) + ui(L" Run clipbridge latest for the path.",
+                        L"运行 clipbridge latest 查看路径。"));
             }
         }
         return 0;
@@ -911,6 +998,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         DestroyWindow(window);
         return 1;
     }
+    if (!RegisterHotKey(window, downloadHotkeyId, MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'C'))
+        notify(ui(L"Could not register Alt+Shift+C for downloads.", L"无法注册下载快捷键 Alt+Shift+C。"));
+    scheduleDownloadCleanup();
+    SetTimer(window, cleanupDownloads, 60u * 60 * 1000, nullptr);
     eventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
         foregroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT);
     startupConnect = std::make_shared<std::atomic_bool>(false);

@@ -15,7 +15,8 @@ clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboa
 
 ## Usage
 
-Copy an image, file, or folder on Windows. Switch to your terminal and press `Alt+Shift+V`.
+- **Send to Linux.** Copy an image, file, or folder on Windows. Switch to your terminal and press `Alt+Shift+V`.
+- **Bring files back to Windows.** Copy one absolute Linux file or folder path from the terminal and press `Alt+Shift+C`. Once the download finishes, press `Ctrl+V` in File Explorer.
 
 ## Deploy via agent
 
@@ -91,6 +92,12 @@ If automatic paste is skipped and the path is on the clipboard, use your termina
 Files are stored under `~/.local/share/clipbridge/<workspace>/batches/`. Hourly cleanup applies the 24-hour lifetime, disk quotas, and recent-upload protection. Keep a separate copy of any files you need long term.
 
 Run receiver tests with `/usr/bin/python3 -B -m unittest discover -s tests -v`. See the [desktop checklist](tests/manual-test-matrix.md) for Windows PowerShell and terminal verification.
+
+### Download files from Linux
+
+ClipBridge reuses its dedicated SSH connection and reads the file or folder by absolute path. Downloads support regular files and folders, up to 200 entries, 128 MiB per file and 256 MiB per transfer. ClipBridge rejects symbolic links and names that cannot be used on Windows.
+
+Files are downloaded to `%LOCALAPPDATA%\ClipBridge\Downloads`. ClipBridge puts the file on the Windows clipboard after checksum verification. If the clipboard changes during the download, the files stay in the cache. ClipBridge removes downloads older than 24 hours at startup and once an hour while running.
 
 ## Configuration
 

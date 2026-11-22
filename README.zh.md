@@ -15,7 +15,8 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
 
 ## 用法
 
-在 Windows 复制图片、文件或文件夹。切换到终端，按下 `Alt+Shift+V`。
+- **发到 Linux。** 在 Windows 复制图片、文件或文件夹。切换到终端，按 `Alt+Shift+V`。
+- **取回到 Windows。** 在终端复制一个 Linux 文件或文件夹的绝对路径，按 `Alt+Shift+C`。下载完成后，在资源管理器按 `Ctrl+V` 粘贴。
 
 ## 用 Agent 部署
 
@@ -91,6 +92,12 @@ flowchart LR
 文件保存在 `~/.local/share/clipbridge/<workspace>/batches/`。清理器每小时运行，按 24 小时 TTL、磁盘配额和近期文件保护策略回收旧数据。缓存不能作为唯一备份。
 
 接收端测试：`/usr/bin/python3 -B -m unittest discover -s tests -v`。Windows PowerShell 与真实终端的桌面验收步骤见 [桌面验收表](tests/manual-test-matrix.md)。
+
+### 从 Linux 取回文件
+
+ClipBridge 复用同一条专用 SSH 长连接，按绝对路径读取文件。它支持普通文件和文件夹，最多 200 项，单文件上限 128 MiB，每次最多 256 MiB。符号链接和无法在 Windows 上使用的文件名会被拒绝。
+
+下载到 `%LOCALAPPDATA%\ClipBridge\Downloads`，校验成功后才作为文件项写入剪贴板。如果下载期间剪贴板有变化，文件仍保存在缓存中。ClipBridge 启动时及运行期间每小时删除超过 24 小时的下载缓存。
 
 ## 配置
 

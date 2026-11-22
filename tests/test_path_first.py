@@ -1,6 +1,7 @@
 import hashlib
 import base64
 import json
+import io
 import os
 import struct
 import subprocess
@@ -50,6 +51,73 @@ class ReceiverTests(unittest.TestCase):
         response_size = struct.unpack_from('>I', result.stdout, 4 + ready_size)[0]
         offset = 8 + ready_size
         return json.loads(result.stdout[offset:offset + response_size])
+
+    def download_request(self, source):
+        header = json.dumps({'version': 1, 'workspace': 'workspace-a',
+                             'kind': 'download', 'path': source}).encode()
+        return b'CBR5' + struct.pack('>I', len(header)) + header
+
+    def test_download_folder_preserves_entries_hashes_and_channel(self):
+        root = Path(self.home.name) / 'Review folder'
+        root.mkdir()
+        (root / '空目录').mkdir()
+        contents = {'说明.md': b'review me', 'empty.txt': b''}
+        for name, data in contents.items():
+            (root / name).write_bytes(data)
+        request = self.download_request(str(root))
+        result = self.command(['serve', '--stdio'], data=request + request)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        frames = io.BytesIO(result.stdout)
+
+        def frame():
+            return json.loads(frames.read(struct.unpack('>I', frames.read(4))[0]))
+
+        self.assertTrue(frame()['download'])
+        for _ in range(2):
+            manifest = frame()
+            self.assertEqual(manifest['status'], 'download')
+            mapped = {entry['path']: entry for entry in manifest['entries']}
+            self.assertEqual(mapped['Review folder/空目录']['type'], 'directory')
+            hashes = []
+            for entry in manifest['entries']:
+                if entry['type'] == 'file':
+                    data = frames.read(entry['size'])
+                    self.assertEqual(data, contents[entry['path'].split('/')[-1]])
+                    hashes.append(hashlib.sha256(data).hexdigest())
+            self.assertEqual(frame(), {'ok': True, 'status': 'download-complete', 'sha256': hashes})
+
+    def test_download_recovers_wrapping_and_rejects_ambiguous_paths(self):
+        root = Path(self.home.name) / 'review artifacts'
+        root.mkdir()
+        file = root / 'draft version.md'
+        file.write_bytes(b'draft')
+        wrapped = str(root).replace('review artifacts', 'review\r\n  artifacts') + '/\n  draft\n  version.md'
+        request = self.download_request(wrapped)
+        result = self.command(['serve', '--stdio'], data=request)
+        ready_size = struct.unpack_from('>I', result.stdout)[0]
+        offset = 4 + ready_size
+        size = struct.unpack_from('>I', result.stdout, offset)[0]
+        manifest = json.loads(result.stdout[offset+4:offset+4+size])
+        self.assertEqual(manifest['entries'][0]['path'], 'draft version.md')
+
+        (root / 'draftversion.md').write_bytes(b'other')
+        result = self.command(['serve', '--stdio'], data=request)
+        ready_size = struct.unpack_from('>I', result.stdout)[0]
+        self.assertEqual(json.loads(result.stdout[8 + ready_size:])['error'],
+                         'DOWNLOAD_WRAP_AMBIGUOUS')
+
+    def test_download_requires_absolute_path_and_rejects_links(self):
+        link = Path(self.home.name) / 'link.txt'
+        link.symlink_to(self.home.name)
+        for path, expected in [('relative.md', 'DOWNLOAD_PATH'),
+                               (str(link), 'DOWNLOAD_TYPE'),
+                               (str(link / 'file.md'), 'NotADirectoryError'),
+                               (str(link.with_name('missing.md')), 'FileNotFoundError')]:
+            with self.subTest(error=expected):
+                result = self.command(['serve', '--stdio'], data=self.download_request(path))
+                ready_size = struct.unpack_from('>I', result.stdout)[0]
+                response = json.loads(result.stdout[8 + ready_size:])
+                self.assertEqual(response, {'ok': False, 'error': expected})
 
     def test_png_bytes_workspace_and_name_are_preserved(self):
         image = base64.b64decode(
@@ -131,6 +199,11 @@ class ReceiverTests(unittest.TestCase):
 
         first = send('a' * 32, '报告 1.txt', b'first')
         duplicate = send('a' * 32, '报告 1.txt', b'first')
+        process.stdin.write(self.download_request(first['paths'][0]))
+        process.stdin.flush()
+        self.assertEqual(read_frame()['status'], 'download')
+        self.assertEqual(process.stdout.read(5), b'first')
+        self.assertEqual(read_frame()['sha256'], [hashlib.sha256(b'first').hexdigest()])
         second = send('b' * 32, '报告 2.txt', b'second')
         receipts = [first, duplicate, second]
         self.assertTrue(all(receipt['ok'] for receipt in receipts))
