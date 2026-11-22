@@ -16,11 +16,17 @@ clip-win-linux is a two-way file transfer bridge called **ClipBridge** between t
 
 ## Features
 
-- **Send from Windows to Linux.** Copy files of any type or folders, then paste their absolute Linux paths into your remote terminal.
-- **Bring files back from Linux.** Copy an absolute Linux path, then paste the downloaded file or folder into Windows File Explorer.
-- **Reuse a dedicated SSH connection.** ClipBridge keeps the transfer connection open and can start and stop alongside your terminal application.
-- **Use the same Windows clipboard across terminals and agents.** Copy in one Windows app and paste into the terminal and agent you use.
-- **See images as attachments.** Agents that recognize pasted image paths automatically show an image tag such as `[image #1]` in the input box.
+### Windows → Linux
+
+- **Send with `Alt+Shift+V`.** Send images, files, and folders from the Windows clipboard and paste their absolute Linux paths into your remote terminal.
+- **Paste images as attachments.** Agents that recognize pasted image paths show an image tag such as `[image #1]`.
+
+### Linux → Windows
+
+- **Download with `Alt+Shift+C`.** Copy the absolute path of a Linux file or folder from any SSH terminal. ClipBridge can rejoin a wrapped path when it resolves to exactly one existing path.
+- **Paste files in File Explorer.** After ClipBridge downloads and verifies the item, press `Ctrl+V` to paste the file or the entire folder. ClipBridge periodically cleans up its Windows download cache.
+
+Both directions use the Windows clipboard and the same dedicated SSH connection across terminals and agents. ClipBridge can start and stop alongside your terminal application.
 
 ## Usage
 
