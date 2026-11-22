@@ -2,7 +2,7 @@
 
 <p align="center"><a href="README.md">English</a> | <strong>简体中文</strong></p>
 
-clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，称为 **ClipBridge**。它通过 SSH 传输图片、文件和文件夹，再把 Linux 返回的绝对路径贴进当前终端。
+clip-win-linux 是一座连接 Windows 剪贴板和 Linux 终端的双向文件传输桥，称为 **ClipBridge**。在 Windows 按 `Alt+Shift+V`，可以把图片、文件或文件夹发到 Linux，并将返回的绝对路径贴进终端。复制一个 Linux 绝对路径后按 `Alt+Shift+C`，可以把对应的文件或文件夹取回 Windows，再在资源管理器粘贴。两个方向共用一条专用 SSH 长连接。
 
 ## 演示
 
@@ -12,11 +12,12 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
 
 ### 从 Linux 复制文件到 Windows
 
-![演示：OpenCode 在 Linux 创建文件并返回绝对路径。复制路径后按 Alt+Shift+C，再到 Windows 资源管理器按 Ctrl+V 粘贴。](docs/clipbridge-demo-download.gif)
+![演示：OpenCode 在 Linux 创建文件并返回绝对路径。复制路径后按 Alt+Shift+C，再到 Windows 资源管理器按 Ctrl+V 粘贴。](docs/clipbridge-demo-linux-to-windows.gif)
 
 ## 功能特性
 
-- **粘贴任意类型的文件。** 在 Windows 复制文件或文件夹，就能把对应的 Linux 绝对路径贴进远端终端。
+- **从 Windows 发到 Linux。** 复制任意类型的文件或文件夹，就能把对应的 Linux 绝对路径贴进远端终端。
+- **从 Linux 取回到 Windows。** 复制文件或文件夹的绝对路径，下载完成后就能在资源管理器粘贴实际文件。
 - **复用专用 SSH 长连接。** ClipBridge 保持传输连接，也可以随你的终端程序启停。
 - **跨终端和 Agent 使用同一个 Windows 剪贴板。** 在 Windows 应用里复制，再切到你使用的终端和 Agent 粘贴。
 - **让图片显示为附件。** 支持识别图片路径的 Agent 会自动在输入框里显示图片标签，例如 `[image #1]`。
@@ -31,14 +32,14 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
 把下面这段提示词复制给 Agent。部署说明见 [AGENTS.md](AGENTS.md) 和 [DEPENDENCIES.md](DEPENDENCIES.md)。
 
 ```text
-请用 https://github.com/NewbieToEverything/clip-win-linux 帮我部署 clip-win-linux。先读 AGENTS.md 和 DEPENDENCIES.md。按我的环境选择 Windows 安装目录和 SSH 别名，为我使用的终端开启自动粘贴，并验证一次完整传输。告诉我哪些步骤需要我操作。
+请用 https://github.com/NewbieToEverything/clip-win-linux 帮我部署 clip-win-linux。先读 AGENTS.md 和 DEPENDENCIES.md。按我的环境选择 Windows 安装目录和 SSH 别名，为我使用的终端开启自动粘贴，并验证 Windows → Linux 和 Linux → Windows 各一次完整传输。告诉我哪些步骤需要我操作。
 ```
 
 ## 手动部署
 
 先按 [部署依赖](DEPENDENCIES.md) 检查环境。默认 SSH 别名是 `linux`，也可以指定其他别名。请选择 Windows 安装目录，例如当前用户的 `%LOCALAPPDATA%\ClipBridge`。Windows 脚本和 EXE 放在同一目录。
 
-1. 在 Linux 安装 Python 3.9 或更新版本 后，在仓库运行 `bash linux/install.sh`。该脚本安装接收器并启用每小时缓存清理计时器。
+1. 在 Linux 安装 Python 3.9 或更新版本后，在仓库运行 `bash linux/install.sh`。该脚本安装接收器并启用每小时缓存清理计时器。
 2. Linux 上的 sshd 必须允许 `CLIPBRIDGE_WS` 环境变量。检查并重载 sshd 的步骤见 [Agent 部署指南](AGENTS.md#linux-端)。保持现有 SSH 会话，直到新连接验证成功。
 3. Windows OpenSSH 配置中的 `Host linux` 段设置 `SetEnv CLIPBRIDGE_WS=workspace-a`；设备 B 使用 `workspace-b`。验证：
 
@@ -52,6 +53,8 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
    ```powershell
    .\ClipBridgeHotkey.exe --ssh-host linux --auto-paste WindowsTerminal.exe
    ```
+
+6. 用 `Alt+Shift+V` 发一个测试文件到 Linux。复制返回的绝对路径，按 `Alt+Shift+C`，再在 Windows 资源管理器粘贴并核对文件。
 
 ### 让 ClipBridge 随你的终端程序启停
 
@@ -70,14 +73,14 @@ clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，�
 
 ```mermaid
 flowchart LR
-    W["Windows<br/>ClipBridge 热键程序与上传代理"]
-    L["Linux<br/>OpenSSH Server 与 ClipBridge 接收器"]
+    W["Windows<br/>ClipBridge 热键程序与传输代理"]
+    L["Linux<br/>OpenSSH Server 与 ClipBridge 传输端"]
     W <-->|"专用 SSH 长连接"| L
 ```
 
-Windows 上传代理通过 OpenSSH 启动 Linux 上的接收器（`clipbridge serve --stdio`）。已打开的终端使用自己的 SSH 会话。
+Windows 传输代理通过 OpenSSH 启动 Linux 上的传输端（`clipbridge serve --stdio`）。发送文件和取回文件都由 Windows 发起，共用这条专用连接。你打开的终端使用自己的 SSH 会话。
 
-从联动快捷方式打开 XPipe，ClipBridge 会在后台预连接。完全退出 XPipe 后，ClipBridge 等当前上传结束再断开。只关闭 SSH 标签页，或关窗口后 XPipe 仍在后台，连接会继续保留。
+从联动快捷方式打开 XPipe，ClipBridge 会在后台预连接。完全退出 XPipe 后，ClipBridge 等当前传输结束再断开。只关闭 SSH 标签页，或关窗口后 XPipe 仍在后台，连接会继续保留。
 
 ### 按下 Alt+Shift+V 后，文件或文件夹怎么进入输入框？
 
@@ -101,9 +104,19 @@ flowchart LR
 
 接收端测试：`/usr/bin/python3 -B -m unittest discover -s tests -v`。Windows PowerShell 与真实终端的桌面验收步骤见 [桌面验收表](tests/manual-test-matrix.md)。
 
-### 从 Linux 取回文件
+### 按下 Alt+Shift+C 后，文件怎么回到 Windows？
 
-ClipBridge 复用同一条专用 SSH 长连接，按绝对路径读取文件。它支持普通文件和文件夹，最多 200 项，单文件上限 128 MiB，每次最多 256 MiB。符号链接和无法在 Windows 上使用的文件名会被拒绝。
+```mermaid
+flowchart LR
+    H["① 复制绝对路径<br/>按 Alt+Shift+C"] --> W["Windows · ClipBridge"]
+    W -->|"② 请求文件"| L["Linux · 按路径读取"]
+    L -->|"③ 返回文件并校验"| W
+    W -->|"④ Ctrl+V"| E["资源管理器"]
+```
+
+ClipBridge 从 Windows 剪贴板读取一个 Linux 绝对路径，通过同一条专用 SSH 连接发起下载。路径两端的空白会被去掉。遇到终端断行时，程序会尝试还原路径，确认只有一个有效结果后才下载。
+
+下载支持普通文件和文件夹，最多 200 项，单文件上限 128 MiB，每次最多 256 MiB。符号链接和无法在 Windows 上使用的文件名会被拒绝。
 
 下载到 `%LOCALAPPDATA%\ClipBridge\Downloads`，校验成功后才作为文件项写入剪贴板。如果下载期间剪贴板有变化，文件仍保存在缓存中。ClipBridge 启动时及运行期间每小时删除超过 24 小时的下载缓存。
 
@@ -117,5 +130,6 @@ ClipBridge 复用同一条专用 SSH 长连接，按绝对路径读取文件。�
 | `--paste-timeout seconds` | 8 秒 | 自动粘贴的等待上限，范围 1–60 秒。 |
 | PNG 单文件上限 | 15 MiB | Windows 剪贴板位图编码成 PNG 后的大小上限。 |
 | 普通文件上限 | 128 MiB | 单个文件大小。 |
-| 单次上传上限 | 256 MiB | 一批文件的总大小；最多 200 个文件或目录项。 |
-| 缓存 TTL | 24 小时 | Linux 接收文件默认保留期；近期文件及配额回收另受清理器保护。 |
+| 单次传输上限 | 256 MiB | 一批文件的总大小；最多 200 个文件或目录项。 |
+| Linux 发送缓存保留期 | 24 小时 | Linux 接收文件的默认保留期，清理也受配额和近期文件保护策略影响。 |
+| Windows 下载缓存保留期 | 24 小时 | ClipBridge 启动时和运行期间每小时检查。 |

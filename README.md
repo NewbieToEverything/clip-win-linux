@@ -2,7 +2,7 @@
 
 <p align="center"><strong>English</strong> | <a href="README.zh.md">简体中文</a></p>
 
-clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboard and a Linux terminal. It sends images, files, and folders over SSH, then pastes the returned absolute Linux paths into the current terminal.
+clip-win-linux is a two-way file transfer bridge called **ClipBridge** between the Windows clipboard and a Linux terminal. Press `Alt+Shift+V` on Windows to send images, files, or folders to Linux and paste the returned absolute paths into your terminal. Copy a Linux absolute path and press `Alt+Shift+C` to bring the file or folder back, then paste it in Windows File Explorer. Both directions use the same dedicated SSH connection.
 
 ## Demo
 
@@ -12,11 +12,12 @@ clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboa
 
 ### Copy a Linux file to Windows
 
-![Demo: OpenCode creates a file on Linux and returns the absolute path. Copy the path, press Alt+Shift+C, then paste the downloaded file in Windows File Explorer with Ctrl+V.](docs/clipbridge-demo-download.gif)
+![Demo: OpenCode creates a file on Linux and returns the absolute path. Copy the path, press Alt+Shift+C, then paste the downloaded file in Windows File Explorer with Ctrl+V.](docs/clipbridge-demo-linux-to-windows.gif)
 
 ## Features
 
-- **Paste files of any type.** Copy files or folders on Windows and paste their absolute Linux paths into your remote terminal.
+- **Send from Windows to Linux.** Copy files of any type or folders, then paste their absolute Linux paths into your remote terminal.
+- **Bring files back from Linux.** Copy an absolute Linux path, then paste the downloaded file or folder into Windows File Explorer.
 - **Reuse a dedicated SSH connection.** ClipBridge keeps the transfer connection open and can start and stop alongside your terminal application.
 - **Use the same Windows clipboard across terminals and agents.** Copy in one Windows app and paste into the terminal and agent you use.
 - **See images as attachments.** Agents that recognize pasted image paths automatically show an image tag such as `[image #1]` in the input box.
@@ -31,7 +32,7 @@ clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboa
 Copy the prompt below into your agent. The deployment instructions are in [AGENTS.md](AGENTS.md) and [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ```text
-Deploy clip-win-linux for me using https://github.com/NewbieToEverything/clip-win-linux. Read AGENTS.md and DEPENDENCIES.md first. Choose a Windows installation directory and SSH alias that fit my setup. Enable automatic paste for the terminal I use, verify a transfer end to end, and tell me which steps need my input.
+Deploy clip-win-linux for me using https://github.com/NewbieToEverything/clip-win-linux. Read AGENTS.md and DEPENDENCIES.md first. Choose a Windows installation directory and SSH alias that fit my setup. Enable automatic paste for the terminal I use, verify an end-to-end transfer in each direction, and tell me which steps need my input.
 ```
 
 ## Deploy manually
@@ -53,6 +54,8 @@ Check [Deployment dependencies](DEPENDENCIES.md) first. The default SSH alias is
    .\ClipBridgeHotkey.exe --ssh-host linux --auto-paste WindowsTerminal.exe
    ```
 
+6. Send a test file to Linux with `Alt+Shift+V`. Copy the returned absolute path, press `Alt+Shift+C`, then paste and check the file in Windows File Explorer.
+
 ### Start and stop ClipBridge with your own terminal application
 
 The launcher starts ClipBridge alongside your terminal application and waits for active transfers before closing it. The steps below use XPipe as the example.
@@ -70,14 +73,14 @@ You can use the same lifecycle mechanism with a different terminal application. 
 
 ```mermaid
 flowchart LR
-    W["Windows<br/>ClipBridge hotkey app and upload agent"]
-    L["Linux<br/>OpenSSH server and ClipBridge receiver"]
+    W["Windows<br/>ClipBridge hotkey app and transfer agent"]
+    L["Linux<br/>OpenSSH server and ClipBridge transfer service"]
     W <-->|"Dedicated persistent SSH connection"| L
 ```
 
-The Windows upload agent starts the Linux receiver (`clipbridge serve --stdio`) through OpenSSH. The open terminal uses its own SSH session.
+The Windows transfer agent starts the Linux service (`clipbridge serve --stdio`) through OpenSSH. Windows initiates both uploads and downloads over this dedicated connection. Your terminal uses its own SSH session.
 
-Open XPipe from the integration shortcut and ClipBridge connects in the background. When XPipe exits completely, ClipBridge finishes any active upload before disconnecting. Closing an SSH tab, or closing the window while XPipe stays in the background, leaves the connection open.
+Open XPipe from the integration shortcut and ClipBridge connects in the background. When XPipe exits completely, ClipBridge finishes any active transfer before disconnecting. Closing an SSH tab, or closing the window while XPipe stays in the background, leaves the connection open.
 
 ### How does a file or folder reach the input box after Alt+Shift+V?
 
@@ -101,9 +104,19 @@ Files are stored under `~/.local/share/clipbridge/<workspace>/batches/`. Hourly 
 
 Run receiver tests with `/usr/bin/python3 -B -m unittest discover -s tests -v`. See the [desktop checklist](tests/manual-test-matrix.md) for Windows PowerShell and terminal verification.
 
-### Download files from Linux
+### How does a file reach Windows after Alt+Shift+C?
 
-ClipBridge reuses its dedicated SSH connection and reads the file or folder by absolute path. Downloads support regular files and folders, up to 200 entries, 128 MiB per file and 256 MiB per transfer. ClipBridge rejects symbolic links and names that cannot be used on Windows.
+```mermaid
+flowchart LR
+    H["① Copy the absolute path<br/>Press Alt+Shift+C"] --> W["Windows · ClipBridge"]
+    W -->|"② Request the file"| L["Linux · Read by path"]
+    L -->|"③ Return and verify the file"| W
+    W -->|"④ Ctrl+V"| E["File Explorer"]
+```
+
+ClipBridge reads one absolute Linux path from the Windows clipboard and requests it over the same dedicated SSH connection. It trims surrounding whitespace. If the terminal wrapped the path, ClipBridge tries to rejoin it and downloads only when exactly one reconstructed path exists.
+
+Downloads support regular files and folders, up to 200 entries, 128 MiB per file and 256 MiB per transfer. ClipBridge rejects symbolic links and names that cannot be used on Windows.
 
 Files are downloaded to `%LOCALAPPDATA%\ClipBridge\Downloads`. ClipBridge puts the file on the Windows clipboard after checksum verification. If the clipboard changes during the download, the files stay in the cache. ClipBridge removes downloads older than 24 hours at startup and once an hour while running.
 
@@ -111,11 +124,12 @@ Files are downloaded to `%LOCALAPPDATA%\ClipBridge\Downloads`. ClipBridge puts t
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `--ssh-host alias` | `linux` | Dedicated Windows upload connection. Uses the alias's existing credentials and host key settings. |
+| `--ssh-host alias` | `linux` | Dedicated Windows transfer connection. Uses the alias's existing credentials and host key settings. |
 | SSH `SetEnv CLIPBRIDGE_WS` | Required | Use `workspace-a` or `workspace-b` to keep uploads from different devices in separate directories. |
 | `--auto-paste terminal.exe` | Off when omitted. Enabled by the deployment command above. | Automatically paste into the specified foreground terminal, such as `WindowsTerminal.exe`. |
 | `--paste-timeout seconds` | 8 seconds | Maximum wait for automatic paste, from 1 to 60 seconds. |
 | PNG limit | 15 MiB | Maximum size after encoding a clipboard bitmap as PNG. |
 | File limit | 128 MiB | Maximum size per regular file. |
-| Batch limit | 256 MiB | Maximum batch size, with up to 200 file and directory entries. |
-| Cache lifetime | 24 hours | Default retention. Quotas and recent-upload protection also govern cleanup. |
+| Transfer limit | 256 MiB | Maximum batch size in either direction, with up to 200 file and directory entries. |
+| Linux upload cache lifetime | 24 hours | Default retention. Quotas and recent-upload protection also govern cleanup. |
+| Windows download cache lifetime | 24 hours | ClipBridge checks at startup and hourly while running. |
