@@ -4,7 +4,15 @@
 
 clip-win-linux 搭建了一座连接 Windows 剪贴板和 Linux 终端的桥，称为 **ClipBridge**。它通过 SSH 传输图片、文件和文件夹，再把 Linux 返回的绝对路径贴进当前终端。
 
+## 演示
+
+### 从 Windows 复制文件到 Linux
+
 ![演示：在 Windows 复制本地图片，切换到终端并按 Alt+Shift+V。ClipBridge 通过 SSH 发送图片，随后 Linux 上的 OpenCode 输入框显示图片标签。](docs/clipbridge-demo-auto-paste.gif)
+
+### 从 Linux 复制文件到 Windows
+
+![演示：OpenCode 在 Linux 创建文件并返回绝对路径。复制路径后按 Alt+Shift+C，再到 Windows 资源管理器按 Ctrl+V 粘贴。](docs/clipbridge-demo-download.gif)
 
 ## 功能特性
 

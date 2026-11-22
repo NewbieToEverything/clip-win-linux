@@ -4,7 +4,15 @@
 
 clip-win-linux builds a bridge called **ClipBridge** between the Windows clipboard and a Linux terminal. It sends images, files, and folders over SSH, then pastes the returned absolute Linux paths into the current terminal.
 
+## Demo
+
+### Copy a Windows file to Linux
+
 ![Demo: copy a local image on Windows, switch to the terminal, and press Alt+Shift+V. ClipBridge sends the image over SSH and an attachment appears in OpenCode on Linux.](docs/clipbridge-demo-auto-paste.gif)
+
+### Copy a Linux file to Windows
+
+![Demo: OpenCode creates a file on Linux and returns the absolute path. Copy the path, press Alt+Shift+C, then paste the downloaded file in Windows File Explorer with Ctrl+V.](docs/clipbridge-demo-download.gif)
 
 ## Features
 
