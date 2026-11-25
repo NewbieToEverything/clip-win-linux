@@ -29,16 +29,16 @@ function Get-DisplayError([string]$message) {
         'DOWNLOAD_PATH' { if ($zh) { return '请复制一个 Linux 绝对路径后重试。' }; return 'Copy one absolute Linux path, then try again.' }
         'DOWNLOAD_CLIPBOARD_CHANGED' { if ($zh) { return '剪贴板内容已变化。' }; return 'Clipboard content changed.' }
         'DOWNLOAD_UNSUPPORTED' { if ($zh) { return '请先更新 Linux 接收端。' }; return 'Update the Linux ClipBridge receiver first.' }
-        'DOWNLOAD_RESPONSE' { if ($zh) { return 'Linux 下载回执不完整或无效。' }; return 'The Linux download response was incomplete or invalid.' }
-        'DOWNLOAD_CHECKSUM' { if ($zh) { return '下载校验失败。' }; return 'Download checksum verification failed.' }
+        'DOWNLOAD_RESPONSE' { if ($zh) { return 'Linux 回传响应不完整或无效。' }; return 'The Linux transfer-back response was incomplete or invalid.' }
+        'DOWNLOAD_CHECKSUM' { if ($zh) { return '回传校验失败。' }; return 'Transfer-back checksum verification failed.' }
         'DOWNLOAD_CHANGED' { if ($zh) { return 'Linux 文件在传输时发生了变化。' }; return 'The Linux file changed during transfer.' }
-        'DOWNLOAD_LIMIT' { if ($zh) { return '下载超过文件、目录或大小限制。' }; return 'The download exceeds the file, folder, or size limits.' }
+        'DOWNLOAD_LIMIT' { if ($zh) { return '回传超过文件、目录或大小限制。' }; return 'The transfer back exceeds the file, folder, or size limits.' }
         'DOWNLOAD_TYPE' { if ($zh) { return '只支持普通文件和文件夹。' }; return 'Only regular files and folders are supported.' }
         'DOWNLOAD_NAME_COLLISION' { if ($zh) { return '有两个 Linux 名称在 Windows 上冲突。' }; return 'Two Linux names conflict on Windows.' }
         'DOWNLOAD_NAME' { if ($zh) { return '文件名无法在 Windows 上使用。' }; return 'The name cannot be used on Windows.' }
         'Unsafe source path component' { if ($zh) { return '文件名无法在 Windows 上使用。' }; return 'The name cannot be used on Windows.' }
-        'Source path exceeds limits' { if ($zh) { return '下载路径超过限制。' }; return 'The download path exceeds the limits.' }
-        'DOWNLOAD_CACHE' { if ($zh) { return 'Windows 下载缓存目录不可用。' }; return 'The Windows cache directory is unavailable.' }
+        'Source path exceeds limits' { if ($zh) { return '回传路径超过限制。' }; return 'The transfer-back path exceeds the limits.' }
+        'DOWNLOAD_CACHE' { if ($zh) { return 'Windows 回传缓存目录不可用。' }; return 'The Windows transfer-back cache directory is unavailable.' }
         'FileNotFoundError' { if ($zh) { return 'Linux 路径不存在。' }; return 'The Linux path does not exist.' }
         'NotADirectoryError' { if ($zh) { return 'Linux 路径包含无效目录或符号链接。' }; return 'A Linux path component is not a directory or is a link.' }
         'PermissionError' { if ($zh) { return 'Linux 路径不可读取。' }; return 'The Linux path is not readable.' }

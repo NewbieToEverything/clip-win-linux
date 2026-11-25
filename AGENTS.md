@@ -45,6 +45,16 @@
 4. 启动 EXE 时传 `--ssh-host linux`，并替换成实际别名。配置登录自启时，向 `install-user-startup.ps1` 传同一个 `-SshHost`。XPipe 联动沿用计划任务的参数。启动后复制新图片或文件并按 `Alt+Shift+V`。检查右下角进度、Linux 文件名与 SHA-256，再到目标输入框检查生成的内容。
 5. 原生进度卡片由 Direct2D/DirectWrite 绘制，按下热键后立即显示，不抢焦点。自动输入受前台窗口、焦点变化与等待时限保护，但无法判断同一个终端窗口内的 pane 或 Agent 当前编辑区。没有通过相应桌面验收前，不应假定图片已成为附件。
 
+### XPipe 联动与更新
+
+- 本仓库根目录是项目级 Agent 指引所在目录；本文件是项目级 `AGENTS.md`，部署或维护前先读本文件。
+- 创建 XPipe 桌面/任务栏联动快捷方式时，按需读取 [XPipe 快捷方式配置](windows/xpipe-shortcut.md)；其中包含原快捷方式备份、VBS 目标填写和校验步骤。
+- XPipe 联动模式下，`ClipBridge Hotkey` 计划任务**应保持 Disabled**。启动器只从任务读取 EXE 路径和参数；禁用它可避免 ClipBridge 脱离 XPipe 在登录时独立启动。不要为了启动新版而启用该任务。
+- XPipe 的 `start-with-xpipe.vbs` 启动器在 XPipe 进程启动后，于同一 Windows 桌面会话启动 ClipBridge，并在 XPipe 退出时排空传输后关闭 ClipBridge。更新时必须保留该任务中的 `--ssh-host`、`--auto-paste` 和 `--paste-timeout` 参数。
+- XPipe 开着时更新：先在 Windows 用户桌面会话把新 EXE 编译到临时文件名，运行 `--self-check`；确认成功后，请旧 ClipBridge 正常退出，再替换正式 EXE，并在**同一交互桌面会话**按任务参数启动新版，核对 ClipBridge 与 XPipe 的 SessionId 相同且进程仍存活。不要从 SSH 的非交互会话直接启动正式程序来判断是否成功；通知和热键依赖交互桌面，非交互启动可能无提示退出。
+- 联动脚本不会监控并自动重启已经退出的 ClipBridge。替换期间若旧进程退出，启动器可能仍在等待 XPipe；因此更新后必须显式确认新版进程已启动。若不能从交互桌面启动，就安排通过 XPipe 联动快捷方式重新启动，不要声称部署完成。
+- 部署后检查 EXE 时间戳/哈希、`--self-check` 结果、进程会话和计划任务状态；计划任务应仍为 Disabled。桌面通知、快捷键及实际回传/发送需要在 Windows 桌面手动验收。
+
 ## 协议与缓存
 
 - `CBR5` 帧头包含请求 ID、工作空间、源名称、相对路径、长度及 SHA-256；随后是按序排列的文件字节。

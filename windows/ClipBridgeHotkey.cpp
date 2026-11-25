@@ -177,7 +177,7 @@ void drawProgress(HWND hwnd) {
     constexpr float horizontalMargin = 20;
     constexpr float barY = 76;
     renderTarget->FillEllipse(D2D1::Ellipse(D2D1::Point2F(22, titleY + 12), 4, 4), accentBrush);
-    const std::wstring line = resultLabel.empty() ? (downloading ? ui(L"Downloading", L"正在下载") : ui(L"Sending", L"正在发送")) : resultLabel;
+    const std::wstring line = resultLabel.empty() ? (downloading ? ui(L"Transferring back", L"正在回传") : ui(L"Sending", L"正在发送")) : resultLabel;
     renderTarget->DrawText(line.c_str(), static_cast<UINT32>(line.size()), titleFormat,
         D2D1::RectF(36, titleY, width - 18, resultLabel.empty() || !resultDetail.empty() ? 36.0f : 74.0f), foregroundBrush,
         D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -266,8 +266,10 @@ bool initializeProgressWindow(HINSTANCE instance) {
         0, 0, 360, 116, window, nullptr, instance, nullptr);
     if (!statusWindow) return false;
     currentDpi = GetDpiForWindow(statusWindow);
-    const DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
-    DwmSetWindowAttribute(statusWindow, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
+    // These Windows 11 DWM values are missing from older MinGW headers.
+    constexpr DWORD cornerPreferenceAttribute = 33;
+    constexpr DWORD roundCorners = 2;
+    DwmSetWindowAttribute(statusWindow, cornerPreferenceAttribute, &roundCorners, sizeof(roundCorners));
     return createRenderTarget(statusWindow);
 }
 
@@ -611,7 +613,7 @@ std::string transfer(HWND target, const Upload& task, std::wstring& error) {
     }
     if (result.empty() && error.empty()) {
         error = task.downloading
-            ? ui(L"Download timed out or the SSH connection closed.", L"下载超时或 SSH 连接已断开。")
+            ? ui(L"Transfer back timed out or the SSH connection closed.", L"回传超时或 SSH 连接已断开。")
             : awaitingReceipt
             ? ui(L"No complete receipt from Linux. The remote save status is unknown.",
                 L"未收到完整的 Linux 回执，无法确认远端是否已保存。")
@@ -851,19 +853,20 @@ LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         if (upload->downloading) {
             if (upload->cancel->load()) {
-                showResult(ui(L"Download cancelled", L"下载已取消"));
+                showResult(ui(L"Transfer back cancelled", L"回传已取消"));
             } else if (!upload->error.empty() || upload->path.empty()) {
-                showResult(ui(L"Download failed", L"下载失败"), upload->error);
+                showResult(ui(L"Transfer back failed", L"回传失败"), upload->error);
             } else {
                 DWORD writtenSequence = 0;
                 const auto clipboard = setClipboard(upload->path, upload->clipboardSequence, writtenSequence, true);
                 if (clipboard == ClipboardWrite::Written) {
-                    showResult(ui(L"Downloaded. Press Ctrl+V in Explorer.", L"下载成功。在资源管理器按 Ctrl+V 粘贴。"));
+                    showResult(ui(L"Transferred back successfully", L"回传成功"),
+                        ui(L"Press Ctrl+V to paste.", L"按 Ctrl+V 即可粘贴。"));
                 } else {
                     const auto reason = clipboard == ClipboardWrite::Changed
                         ? ui(L"Clipboard content changed.", L"剪贴板内容已变化。")
                         : ui(L"Could not write the file to the clipboard.", L"无法将文件写入剪贴板。");
-                    showResult(ui(L"Downloaded to the Windows cache", L"已下载到 Windows 缓存"), reason);
+                    showResult(ui(L"Transferred back to the Windows cache", L"已回传到 Windows 缓存"), reason);
                 }
             }
             return 0;
@@ -999,7 +1002,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         return 1;
     }
     if (!RegisterHotKey(window, downloadHotkeyId, MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'C'))
-        notify(ui(L"Could not register Alt+Shift+C for downloads.", L"无法注册下载快捷键 Alt+Shift+C。"));
+        notify(ui(L"Could not register Alt+Shift+C for transfers back.", L"无法注册回传快捷键 Alt+Shift+C。"));
     scheduleDownloadCleanup();
     SetTimer(window, cleanupDownloads, 60u * 60 * 1000, nullptr);
     eventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
